@@ -1,11 +1,4 @@
 # Hepatomap: A Multimodal Atlas of the Aging Mouse Liver
-
-[![R](https://img.shields.io/badge/R-≥4.3-blue)](https://www.r-project.org/)
-[![Python](https://img.shields.io/badge/Python-≥3.10-green)](https://www.python.org/)
-[![Scanpy](https://img.shields.io/badge/Scanpy-1.11-orange)](https://scanpy.readthedocs.io/)
-[![ArchR](https://img.shields.io/badge/ArchR-1.0.2-purple)](https://www.archrproject.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 ## Overview
 
 This repository contains the complete analysis code for the manuscript:
@@ -18,11 +11,8 @@ We generated paired single-nucleus RNA-seq and ATAC-seq (10x Multiome) from **40
 
 ### Key Findings
 
-- Age- and sex-dependent chromatin compartment switching across hepatic cell types
-- Identification of Ascl1 as a female-specific pre-geriatric transcription factor and Bcl6 as a male hepatocyte aging signal
+- Identification of Ascl1 as a female-specific pre-geriatric transcription factor
 - Zonation-resolved transcriptional and epigenomic rewiring during aging
-- GWAS enrichment linking aging chromatin changes to liver/metabolic disease risk
-- Sex-dimorphic gene regulatory networks via SCENIC+
 
 ## Repository Structure
 
