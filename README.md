@@ -3,7 +3,7 @@
 
 This repository contains the complete analysis code for the manuscript:
 
-> **[A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging]**
+> **A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging]*
 > Nishat Sarker, Na Yang, Michel Bernier, Nirad Banskota, Minjung Kwon, Yaohui Chen, Amit Singh, Robert W. Maul, Sadia Afrin, Lin Wang, Miguel Aon, Nathan L. Price, Chang-Yi Cui, Jinshui Fan, Supriyo De, Mary Kaileh, Jeffrey Albrecht, Ranjan Sen, Myriam Gorospe, Rafael de Cabo, Payel Sen1.
 > 2026.
 
