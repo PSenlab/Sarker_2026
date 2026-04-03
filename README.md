@@ -163,7 +163,7 @@ Rscript scripts/05_compartment_switching/01_ab_compartment_calling.R
 | Leiden resolution | 0.6 | Primary clustering resolution |
 | Peak calling | MACS2 q < 0.01 | Reproducible peak set |
 | DESeq2 design | ~ sex + age (LRT) | Pseudobulk differential expression |
-| HMM states | 5 | Stable_Active, Stable_Repressive, A→R, R→A, Non_Monotonic |
+| HMM states | 5 | Stable_active, Stable_repressive, AR, RA, Non_nonotonic |
 
 ## Hepatocyte Zonation Mapping
 
