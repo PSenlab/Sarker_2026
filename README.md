@@ -3,8 +3,8 @@
 
 This repository contains the complete analysis code for the manuscript:
 
-**A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging
-> Nishat Sarker, Na Yang, Michel Bernier, Nirad Banskota, Minjung Kwon, Yaohui Chen, Amit Singh, Robert W. Maul, Sadia Afrin, Lin Wang, Miguel Aon, Nathan L. Price, Chang-Yi Cui, Jinshui Fan, Supriyo De, Mary Kaileh, Jeffrey Albrecht, Ranjan Sen, Myriam Gorospe, Rafael de Cabo, Payel Sen1.
+A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging
+> Nishat Sarker, Na Yang, Michel Bernier, Nirad Banskota, Minjung Kwon, Yaohui Chen, Amit Singh, Robert W. Maul, Sadia Afrin, Lin Wang, Miguel Aon, Nathan L. Price, Chang-Yi Cui, Jinshui Fan, Supriyo De, Mary Kaileh, Jeffrey Albrecht, Ranjan Sen, Myriam Gorospe, Rafael de Cabo, Payel Sen.
 > 2026.
 
 We generated paired single-nucleus RNA-seq and ATAC-seq (10X Multiome) from **40 mouse liver samples** spanning **five age groups** (young, mid-age, old, pre-geriatric, geriatric) and **both sexes**, yielding ~300,000 high-quality nuclei with paired modalities.
