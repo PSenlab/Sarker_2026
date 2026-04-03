@@ -3,16 +3,11 @@
 
 This repository contains the complete analysis code for the manuscript:
 
-> **[Manuscript Title]**
+> **[A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging]**
 > Sarker N, Banskota N, ... , Sen P.
-> *Cell Metabolism*, 2026.
+> 2026.
 
-We generated paired single-nucleus RNA-seq and ATAC-seq (10x Multiome) from **40 mouse liver samples** spanning **five age groups** (young, mid-age, old, pre-geriatric, geriatric) and **both sexes**, yielding ~300,000 high-quality nuclei with paired modalities.
-
-### Key Findings
-
-- Identification of Ascl1 as a female-specific pre-geriatric transcription factor
-- Zonation-resolved transcriptional and epigenomic rewiring during aging
+We generated paired single-nucleus RNA-seq and ATAC-seq (10X Multiome) from **40 mouse liver samples** spanning **five age groups** (young, mid-age, old, pre-geriatric, geriatric) and **both sexes**, yielding ~300,000 high-quality nuclei with paired modalities.
 
 ## Repository Structure
 
@@ -31,7 +26,7 @@ liver-aging-multiome/
 │
 ├── scripts/
 │   ├── 01_preprocessing/
-│   │   ├── 01_cellranger_arc.sh        # Cell Ranger ARC alignment
+│   │   ├── 01_cellranger_arc.sh        # Cell Ranger Arc alignment
 │   │   ├── 02_soupx_decontamination.R  # Ambient RNA removal
 │   │   └── 03_qc_filtering.py          # QC and nuclei filtering
 │   │
@@ -181,23 +176,6 @@ Rscript scripts/05_compartment_switching/01_ab_compartment_calling.R
 | Hep-05 | Periportal | *Arg1*, *Ass1* |
 | Hep-06 | Midlobular | *Mup20*, *Serpina1e* |
 | Hep-07 | Midlobular | *Apoa4*, *Ttr* |
-
-## Citation
-
-If you use this code or data, please cite:
-
-```bibtex
-@article{sarker2026hepatomap,
-  title={[Manuscript Title]},
-  author={Sarker, Nishat and Banskota, Nirad and ... and Sen, Payel},
-  journal={Cell Metabolism},
-  year={2026}
-}
-```
-
-## License
-
-This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
 ## Contact
 
