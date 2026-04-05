@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# ArchR Peak Calling, Co-Accessibility, and Peak-to-Gene Linkage (Step 11)
+# ArchR peak calling, co-accessibility, and peak-to-gene Linkage (Step 11)
 # ==============================================================================
 #
 # Description:
