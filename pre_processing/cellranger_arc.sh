@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# CellRanger Arc processing pipeline for single-nucleus multi-ome samples
+# CellRanger Arc processing pipeline for single-nucleus multi-ome data
 #===============================================================================
 # Description: Processes snRNA-seq + snATAC-seq multiome libraries using 
 #              CellRanger Arc for mouse liver aging study
