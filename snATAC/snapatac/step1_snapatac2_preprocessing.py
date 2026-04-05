@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 #===============================================================================
-# SnapATAC2 Preprocessing Pipeline for Single-Nucleus ATAC-seq Data
+# SnapATAC2 Preprocessing Pipeline for single-nucleus ATAC-seq data
 #===============================================================================
 # Description: Processes snATAC-seq data from multiome experiment using 
 #              SnapATAC2 including fragment import, QC filtering, doublet 
 #              removal, and batch integration with Harmony
 #
-# Input:       Cell Ranger ARC output (atac_fragments.tsv.gz files)
+# Input:       CellRanger Arc output (atac_fragments.tsv.gz files)
 # Output:      Combined AnnDataSet with integrated ATAC data
 #
 # Reference:   Zhang K et al. (2024). SnapATAC2: A fast, scalable and versatile
