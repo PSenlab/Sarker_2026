@@ -4,9 +4,7 @@
 # ==============================================================================
 #
 # Description:
-#   This script combines P2G annotation results from ALL cell types and
-#   creates publication-ready stacked barplots comparing annotation
-#   distributions across cell types.
+#   This script combines P2G annotation results from cell types 
 #
 # Prerequisites:
 #   - Run Step 12 for EACH cell type to generate per-celltype CSVs:
