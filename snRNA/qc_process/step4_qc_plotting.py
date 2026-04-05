@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 #===============================================================================
-# QC Visualization for Single-Nucleus RNA-seq Data
+# QC visualization for single-nucleus RNA-seq data
 #===============================================================================
 # Description: Generates QC violin plots (RNA metrics by age group) and
 #              UMAP overlays (mito%, ribo%, Hb%) for quality assessment
 #
 # Input:       Integrated AnnData with scVI embedding (from scvi_integration.py)
-# Output:      Panel c - RNA QC violin plots (n_counts, n_genes)
-#              Panel d - UMAP grid (age x QC metric: mito, ribo, Hb)
-#
-# Reference:   Follows Cell Metabolism figure formatting
-#===============================================================================
+# Output:      RNA QC violin plots (n_counts, n_genes)
+#              UMAP grid (age x QC metric: mito, ribo, Hb)
+# #===============================================================================
 
 import logging
 import scanpy as sc
@@ -63,7 +61,7 @@ UMAP_METRICS = {
 UMAP_BASIS = "X_scVI_MDE"
 
 # Age group column in adata.obs
-AGE_COL = "age_group"
+AGE_COL = "age"
 
 
 #-------------------------------------------------------------------------------
