@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# ArchR Downstream Analysis: Gene Scores and Marker Discovery (Step 8)
+# ArchR downstream analysis: Gene scores and marker discovery (Step 8)
 # ==============================================================================
 #
 # Description:
