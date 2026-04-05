@@ -3,7 +3,7 @@
 # Cell Ranger ARC Processing Pipeline for Single-Nucleus Multiome Data
 #===============================================================================
 # Description: Processes snRNA-seq + snATAC-seq multiome libraries using 
-#              Cell Ranger ARC for mouse liver aging study
+#              Cell Ranger Arc for mouse liver aging study
 #
 # Samples:     40 total across 5 age groups (Young, Mid-age, Old, Pre-geriatric, 
 #              Geriatric); n=8 per group
