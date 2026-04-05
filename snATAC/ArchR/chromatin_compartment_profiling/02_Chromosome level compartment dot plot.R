@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# Chromosome-Level Compartment Dot Plots and Data Export
+# Chromosome level compartment dot plots
 # ==============================================================================
 #
 # Description:
@@ -28,8 +28,6 @@
 #   Color scale uses data-driven midpoint (center of observed range) rather
 #   than fixed 0.5, so the full blue-white-red gradient spans actual values.
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
