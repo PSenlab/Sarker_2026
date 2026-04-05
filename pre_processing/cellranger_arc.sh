@@ -1,12 +1,12 @@
 #!/bin/bash
 #===============================================================================
-# Cell Ranger ARC Processing Pipeline for Single-Nucleus Multiome Data
+# CellRanger Arc processing pipeline for single-nucleus multi-ome
 #===============================================================================
 # Description: Processes snRNA-seq + snATAC-seq multiome libraries using 
-#              Cell Ranger Arc for mouse liver aging study
+#              CellRanger Arc for mouse liver aging study
 #
-# Samples:     40 total across 5 age groups (Young, Mid-age, Old, Pre-geriatric, 
-#              Geriatric); n=8 per group
+# Samples:     40 total across 5 age groups (young, mid-age, old, pre-geriatric, 
+#              geriatric); n=8 per group
 #
 # Reference:   mm10 (refdata-cellranger-arc-mm10-2020-A)
 #===============================================================================
