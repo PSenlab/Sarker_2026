@@ -1,30 +1,16 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# ArchR Arrow File Creation for Single-Cell ATAC-seq (Multiome)
+# ArchR Arrow File Creation for single-nucleus ATAC-seq data
 # ==============================================================================
 #
-# Description:
-#   This script creates Arrow files from Cell Ranger ARC fragment files.
-#   Arrow files are the primary data structure for ArchR analysis.
-#   QC plots are generated per age group.
-#
-# Study Design:
-#   - Species: Mouse (mm10)
-#   - Tissue: Liver
-#   - Age Groups: Young, Middle-age, Old, Pre-geriatric, Geriatric
-#   - Replicates: 8 biological replicates per age group (n=40 total)
 #
 # Input:
-#   - Cell Ranger ARC output (atac_fragments.tsv.gz files)
+#   - CellRanger Arc output (atac_fragments.tsv.gz files)
 #
 # Output:
 #   - Arrow files (one per sample)
 #   - QC plots organized by age group
 #
-# Requirements:
-#   - R >= 4.0
-#   - ArchR >= 1.0.2
-#   - Cell Ranger ARC output
 #
 # Citation:
 #   - ArchR: Granja et al., Nature Genetics 2021
