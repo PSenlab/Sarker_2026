@@ -1,22 +1,11 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# ArchR Preprocessing Pipeline for Single-Cell ATAC-seq (Multiome)
-# ==============================================================================
 #
 # Description:
-#   This script performs preprocessing of single-cell ATAC-seq data from a 
-#   10x Multiome experiment using ArchR. The pipeline includes quality control,
-#   doublet removal, dimensionality reduction, batch correction, and integration
-#   with Seurat-derived cell type annotations and embeddings.
+#   The pipeline includes quality control, doublet removal, dimensionality reduction, batch correction, and integration
+#   with muon derived cell type annotations and embeddings.
 #
 # Prerequisites:
 #   - Run archr_arrow_creation.R (Step 1) first to generate Arrow files
-#
-# Study Design:
-#   - Species: Mouse (mm10)
-#   - Tissue: Liver
-#   - Age Groups: Young, Middle-age, Old, Pre-geriatric, Geriatric
-#   - Replicates: 8 biological replicates per age group (n=40 total)
 #
 # Pipeline Overview:
 #   Step 1: Arrow File Creation (archr_arrow_creation.R)
@@ -24,7 +13,7 @@
 #   Step 3: Doublet Detection and Filtering
 #   Step 4: Iterative Latent Semantic Indexing (LSI)
 #   Step 5: Harmony Batch Correction
-#   Step 6: Seurat Metadata Integration
+#   Step 6: Metadata Integration
 #   Step 7: WNN UMAP Embedding Transfer
 #
 # Requirements:
@@ -325,10 +314,10 @@ if (file.exists(file.path(step5_dir, "ArchRProject.rds"))) {
 }
 
 # ==============================================================================
-# 6: SEURAT METADATA INTEGRATION
+# 6: INTEGRATION
 # ==============================================================================
 
-banner("6: Seurat Metadata Integration")
+banner("6: Integration")
 
 step6_dir <- file.path(OUTPUT_BASE, "Step6_MetadataAdded")
 ensure_dir(step6_dir)
