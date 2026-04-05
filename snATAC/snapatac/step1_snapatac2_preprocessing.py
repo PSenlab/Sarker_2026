@@ -37,7 +37,7 @@ AGE_GROUPS = {
 QC_PARAMS = {
     "min_num_fragments": 500,
     "min_tsse": 4,
-    "n_features": 4000000,  # for combined dataset feature selection
+    "n_features": 400000,  # for combined dataset feature selection
 }
 
 #-------------------------------------------------------------------------------
