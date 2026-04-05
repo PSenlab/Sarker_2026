@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #===============================================================================
-# scVI Integration for Single-Nucleus RNA-seq Data
+# scVI Integration for single-nucleus RNA-seq Data
 #===============================================================================
 # Description: Batch integration using scVI (single-cell Variational Inference)
 #              with Leiden clustering at multiple resolutions
