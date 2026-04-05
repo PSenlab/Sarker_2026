@@ -4,15 +4,15 @@
 # ==============================================================================
 #
 # Description:
-#   Extracts Peak-to-Gene (P2G) linkages from ArchR projects, performs k-means
+#   Extracts peak-to-gene (P2G) linkages from ArchR projects, performs k-means
 #   clustering on P2G heatmaps, annotates peaks using ENCODE cCREs and
 #   ChIPseeker, and generates cross-celltype stacked barplots.
 #
 # Prerequisites:
 #   - Run Step 11 (archr_peak_calling_p2g.R) to generate P2G linkages
 #   - Download ENCODE cCREs: mm10-cCREs.bed from ENCODE SCREEN
-#   - Run this script for EACH cell type, then run Section 13-14 once
-#     after all cell types are processed
+#     Run Steps 12.1-12.10 for EACH cell type, then run Steps 12.11-12.12
+#     once after all cell types are processed
 #
 # Input:
 #   - ArchR project with P2G linkages (from Step 11b)
