@@ -5,7 +5,7 @@
 # Description: Removes ambient RNA contamination from snRNA-seq data using 
 #              SoupX with automated contamination estimation
 #
-# Input:       Cell Ranger ARC output directories (outs folder with raw and 
+# Input:       CellRanger Arc output directories (outs folder with raw and 
 #              filtered matrices)
 # Output:      Corrected count matrices in 10x-compatible format
 #
