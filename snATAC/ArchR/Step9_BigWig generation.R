@@ -1,11 +1,11 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# Generate Group-Level BigWigs (Age × Sex × Celltype) using 80 kb Bins (Step 9)
+# Generate group-level BigWigs (age × sex × celltype) using 80 kb Bins (Step 9)
 # ==============================================================================
 #
 # Description:
 #   This script generates normalized BigWig files for chromatin accessibility
-#   grouped by Age, Sex, and Cell Type combinations. Uses 80 kb bins for
+#   grouped by age, sex, and cell type combinations. Uses 80 kb bins for
 #   downstream compartment switching analysis.
 #
 # Prerequisites:
@@ -17,7 +17,7 @@
 #   - Preprocessed ArchR project with imputation (from Step 8)
 #
 # Output:
-#   - BigWig files per Age × Sex × Celltype group
+#   - BigWig files per age × sex × celltype group
 #   - Group counts table
 #   - BigWig manifest file
 #
