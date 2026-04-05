@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 #===============================================================================
-# SoupX Ambient RNA Removal for Single-Nucleus Multiome Data
+# SoupX ambient RNA removal for single-nucleus multi-ome data
 #===============================================================================
 # Description: Removes ambient RNA contamination from snRNA-seq data using 
 #              SoupX with automated contamination estimation
