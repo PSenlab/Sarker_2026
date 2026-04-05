@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# Chromatin Compartment Analysis with Repeat Element Integration
+# Chromatin compartment analysis
 # ==============================================================================
 #
 # Description:
@@ -43,8 +43,6 @@
 #   17. Alluvial plots
 #   18. Session info
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
