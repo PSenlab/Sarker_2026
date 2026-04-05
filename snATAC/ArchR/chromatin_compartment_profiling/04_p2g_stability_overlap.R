@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# Peak-to-Gene Linkage Overlap with Compartment Stability Classes
+# Peak-to-Gene linkage overlap with compartment stability classes
 # ==============================================================================
 #
 # Description:
@@ -19,9 +19,6 @@
 #   - Stability bins per sex x stability class (.rds, .bed)
 #   - Overlap statistics summary (.tsv)
 #   - R objects for downstream analysis (.rds)
-#
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
