@@ -9,8 +9,8 @@
 # Input:       Integrated AnnData with clustering (from scvi_integration.py)
 # Output:      Annotated AnnData with cell type labels + DE results
 #
-# Cell Types:  Hepatocytes, Endothelial, Kupffer, Stellate, MoMFs,
-#              Cholangiocytes, Lymphoid (T and B cells)
+# Cell Types:  hepatocyte, endothelial, Kupffer, stellate, MoMFs,
+#              cholangiocytes, Lymphoid (T and B cells)
 #===============================================================================
 
 import logging
