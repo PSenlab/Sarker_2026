@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Hepatocyte sub-cluster and zonation Analysis Across Aging
+# Hepatocyte Sub-Cluster and Zonation Analysis Across Aging
 # ==============================================================================
 #
 # Description:
@@ -45,6 +45,8 @@
 #   8. Per-subset zonation violin plots (cell-level) + ANOVA
 #   9. Per-subset zonation boxplots (sample-level means) + ANOVA
 #
+# Reference:
+#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
@@ -72,7 +74,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE THESE PATHS
 # ==============================================================================
 
-DATA_PATH = "path/to/adata_with_resolutions2.h5ad"
+DATA_PATH = "integrated_scvi.h5ad"
 FIGURES_DIR = "figures"
 RESULTS_DIR = "results"
 
