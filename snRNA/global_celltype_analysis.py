@@ -17,7 +17,10 @@
 #   Figures:
 #     - umap_WNN_age.pdf           (global UMAP colored by age)
 #     - umap_WNN_celltype.pdf      (global UMAP colored by cell type)
-#     - {sex}_boxplot_celltype_by_age.pdf
+#     - boxplot_celltype_by_age_male_female.pdf
+#         (panel-style figure: male top, female bottom, one-way ANOVA + BH FDR,
+#          * p<0.05, ** p<0.01, *** p<0.001, n.s. non-significant,
+#          red dots = outliers)
 #     - stacked_bar_celltype_pct_{sex}.pdf
 #     - stacked_bar_celltype_counts_{sex}.pdf
 #
@@ -264,6 +267,11 @@ print("=" * 70)
 print("ANALYSIS 4: Boxplots (celltype proportions by age)")
 print("=" * 70)
 
+#  Per-sex counts + ANOVA, then a single combined figure
+#  (male top, female bottom) matching the paper's panel (a) legend.
+
+sex_results = {}
+
 for sex in SEX_ORDER:
     if sex not in adata.obs[SEX_COL].unique():
         continue
@@ -278,7 +286,7 @@ for sex in SEX_ORDER:
     ct_counts[AGE_COL] = ct_counts[SAMPLE_COL].map(meta[AGE_COL])
     ct_counts[SEX_COL] = sex
 
-    # Per-celltype ANOVA
+    # Per-celltype one-way ANOVA, FDR-BH corrected
     anova_rows = []
     for ct in ct_counts[CELLTYPE_COL].unique():
         ct_sub = ct_counts[ct_counts[CELLTYPE_COL] == ct]
@@ -297,49 +305,94 @@ for sex in SEX_ORDER:
     )
     ct_counts["significance"] = ct_counts["significance"].fillna("")
 
-    sex_present_ages = [a for a in AGE_ORDER if a in ct_counts[AGE_COL].dropna().unique()]
-    ct_order = sorted(ct_counts[CELLTYPE_COL].unique())
+    sex_results[sex] = {"counts": ct_counts, "anova": anova_df}
 
-    fig, ax = plt.subplots(figsize=(14, 8))
+    # Per-sex tables
+    ct_counts.to_csv(f"{RESULTS_DIR}/{sex}_celltype_percentages.csv", index=False)
+    anova_df.to_csv(f"{RESULTS_DIR}/{sex}_celltype_anova.csv", index=False)
+
+# Combined figure - male top, female bottom, shared cell-type order
+ct_order = sorted(
+    set().union(*[sex_results[s]["counts"][CELLTYPE_COL].unique()
+                  for s in sex_results])
+)
+global_present_ages = [
+    a for a in AGE_ORDER
+    if any(a in sex_results[s]["counts"][AGE_COL].dropna().unique()
+           for s in sex_results)
+]
+
+# Red-dot outlier styling per the figure legend
+flierprops = dict(
+    marker="o", markerfacecolor="red", markeredgecolor="red",
+    markersize=4, linestyle="none",
+)
+
+panel_sexes = [s for s in ["male", "female"] if s in sex_results]
+fig, axes = plt.subplots(
+    len(panel_sexes), 1, figsize=(14, 5 * len(panel_sexes)),
+    sharex=True, sharey=False,
+)
+if len(panel_sexes) == 1:
+    axes = [axes]
+
+ymax_global = max(
+    sex_results[s]["counts"]["percentage"].max() for s in panel_sexes
+)
+
+for ax, sex in zip(axes, panel_sexes):
+    ct_counts = sex_results[sex]["counts"]
+    sex_present_ages = [
+        a for a in AGE_ORDER if a in ct_counts[AGE_COL].dropna().unique()
+    ]
+
     sns.boxplot(
         data=ct_counts, x=CELLTYPE_COL, y="percentage", hue=AGE_COL,
         order=ct_order, hue_order=sex_present_ages,
         palette={k: AGE_PALETTE[k] for k in sex_present_ages},
-        showcaps=True, fliersize=3, dodge=True, ax=ax,
+        showcaps=True, flierprops=flierprops, dodge=True, ax=ax,
     )
-    ymax = ct_counts["percentage"].max()
-    ax.set_ylim(0, ymax * 1.2)
+    ax.set_ylim(0, ymax_global * 1.2)
 
+    # Significance annotation per celltype
     for i, ct in enumerate(ct_order):
         sub_ct = ct_counts[ct_counts[CELLTYPE_COL] == ct]
         if sub_ct.empty:
             continue
         star = sub_ct["significance"].iloc[0]
-        label, color = (star, "red") if star else ("ns", "darkblue")
-        ax.text(i, sub_ct["percentage"].max() * 1.1, label,
-                ha="center", va="bottom", fontsize=18, color=color)
+        label, color = (star, "red") if star else ("n.s.", "darkblue")
+        ax.text(
+            i, sub_ct["percentage"].max() * 1.08, label,
+            ha="center", va="bottom", fontsize=16, color=color,
+        )
 
-    handles = [
-        Patch(facecolor=AGE_PALETTE[a], edgecolor="black", label=a)
-        for a in sex_present_ages
-    ]
-    ax.legend(
-        handles=handles, title="Age Group",
-        bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False,
-    )
-    ax.set_title(f"{sex.capitalize()} Samples: Cell Type Proportions by Age", fontsize=16)
-    ax.set_ylabel("Percentage of Cells per Sample", fontsize=12)
-    ax.set_xlabel("Cell Type", fontsize=12)
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
+    # Legend only on the top panel
+    if sex == panel_sexes[0]:
+        handles = [
+            Patch(facecolor=AGE_PALETTE[a], edgecolor="black", label=a)
+            for a in global_present_ages
+        ]
+        ax.legend(
+            handles=handles, title="Age Group",
+            bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False,
+        )
+    else:
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
 
-    fname = f"{FIGURES_DIR}/{sex}_boxplot_celltype_by_age.pdf"
-    fig.savefig(fname, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] {fname}")
+    ax.set_title(sex.capitalize(), fontsize=14, fontweight="bold", loc="left")
+    ax.set_ylabel("% of cells per sample", fontsize=12)
+    ax.set_xlabel("")
 
-    ct_counts.to_csv(f"{RESULTS_DIR}/{sex}_celltype_percentages.csv", index=False)
-    anova_df.to_csv(f"{RESULTS_DIR}/{sex}_celltype_anova.csv", index=False)
+axes[-1].set_xlabel("Cell Type", fontsize=12)
+plt.setp(axes[-1].get_xticklabels(), rotation=45, ha="right")
+plt.tight_layout()
+
+fname = f"{FIGURES_DIR}/boxplot_celltype_by_age_male_female.pdf"
+fig.savefig(fname, bbox_inches="tight", dpi=300)
+plt.close(fig)
+print(f"  [OK] {fname}")
 
 
 # ==============================================================================
