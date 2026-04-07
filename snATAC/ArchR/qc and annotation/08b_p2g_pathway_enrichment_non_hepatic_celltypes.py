@@ -12,8 +12,8 @@
 #
 # Input:
 #   - Annotated AnnData (.h5ad) with celltype labels
-#   - Per-celltype ArchR_P2G_AllClusters_GENES.xlsx files
-#     (from compartment_04_p2g_stability_overlap.R / P2G extraction step)
+#   - Per-celltype P2G_AllClusters_GENES.xlsx files
+#     (from archr_p2g_analysis.R Step 12.4)
 #
 # Output (per cell type):
 #   - {celltype}_Reactome_Pathways_2024_results.csv (full enrichment results)
@@ -47,10 +47,10 @@ mpl.rcParams["ps.fonttype"] = 42
 # ==============================================================================
 
 # AnnData with celltype annotations
-ADATA_PATH = "path/to/final_rna_wnn.h5ad"
+ADATA_PATH = "integrated_scvi.h5ad"
 
 # Base directory containing per-celltype P2G output folders
-# Expected structure: P2G_BASE_DIR/{celltype}/ArchR_P2G_AllClusters_GENES.xlsx
+# Expected structure: P2G_BASE_DIR/{celltype}/P2G_AllClusters_GENES.xlsx
 P2G_BASE_DIR = "path/to/RNA_ATAC_archR/allcelltype"
 
 # Output directory
@@ -330,7 +330,7 @@ for celltype in CELL_TYPES:
     # Step 2: Load P2G genes
     # ------------------------------------------------------------------
     print(f"\n  Step 2: Loading P2G genes")
-    p2g_file = os.path.join(P2G_BASE_DIR, celltype, "ArchR_P2G_AllClusters_GENES.xlsx")
+    p2g_file = os.path.join(P2G_BASE_DIR, celltype, "P2G_AllClusters_GENES.xlsx")
 
     if not os.path.exists(p2g_file):
         print(f"    [SKIP] P2G file not found: {p2g_file}")
