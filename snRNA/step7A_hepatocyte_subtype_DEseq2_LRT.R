@@ -1,18 +1,27 @@
 #!/usr/bin/env Rscript
-# ==============================================================
-# hepatocyte_complete_R_pipeline.R
-# ==============================================================
-# Complete R pipeline for hepatocyte sub-cluster analysis:
+# ==============================================================================
+# Hepatocyte Sub-Cluster DESeq2 Pseudobulk Pipeline
+# ==============================================================================
 #
-#   STEP 0: Load h5ad → Seurat, subset to Hepatocytes
+# Description:
+#   Complete R pipeline for hepatocyte sub-cluster bulk-style analysis:
+#   pseudobulk aggregation per sample, DESeq2 LRT (~sex+age vs ~sex) per
+#   sub-cluster, k-means heatmap clustering, and merged Excel exports.
+#
+# Input:
+#   - Annotated AnnData (.h5ad) with celltype, celltype2 (sub-clusters),
+#     sex, age, sample labels
+#
+# Pipeline:
+#   STEP 0: Load h5ad -> Seurat, subset to Hepatocytes
 #   STEP 1: Pseudobulk aggregation + DESeq2 LRT per celltype2
 #   STEP 2: Extract significant DEGs (FDR < 0.05)
-#   STEP 3: Z-scored heatmaps (K-means clustered, log2FC annotation)
+#   STEP 3: Z-scored heatmaps (k-means clustered, log2FC annotation)
 #   STEP 4: Export cluster gene lists for Reactome enrichment
-#   STEP 5: Merged Excel — all FDR < 0.05 DEGs (one tab per celltype)
-#   STEP 6: Merged Excel — heatmap genes stat > 40 with cluster column
+#   STEP 5: Merged Excel - all FDR < 0.05 DEGs (one tab per sub-cluster)
+#   STEP 6: Merged Excel - heatmap genes (stat > threshold) + cluster column
 #
-# Outputs:
+# Output:
 #   - bulk_counts_<ct>.rds / sample_info_<ct>.rds
 #   - deseq2_LRT_age_<ct>.csv (full results)
 #   - deseq2_LRT_age_<ct>_sig_FDR_lt_0.05.csv
@@ -22,30 +31,39 @@
 #   - <ct>_all_cluster_assignments.csv
 #   - DESeq2_LRT_all_celltypes_FDR005.xlsx
 #   - Heatmap_genes_stat40_with_clusters.xlsx
-# ==============================================================
+#
+# Reference:
+#   Sarker et al. (2026) Cell Metabolism
+#
+# ==============================================================================
 
-# ============================================================
-# Libraries
-# ============================================================
-library(Seurat)
-library(Matrix)
-library(DESeq2)
-library(dplyr)
-library(pheatmap)
-library(circlize)
-library(ComplexHeatmap)
-library(RColorBrewer)
-library(gridExtra)
-library(grid)
-library(ggplot2)
-library(openxlsx)
+# ==============================================================================
+# LIBRARIES
+# ==============================================================================
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(Matrix)
+  library(DESeq2)
+  library(dplyr)
+  library(pheatmap)
+  library(circlize)
+  library(ComplexHeatmap)
+  library(RColorBrewer)
+  library(gridExtra)
+  library(grid)
+  library(ggplot2)
+  library(openxlsx)
+  library(schard)
+})
 
-# ============================================================
-# Configuration
-# ============================================================
-H5AD_PATH       <- "adata_with_resolutions2.h5ad"
+
+# ==============================================================================
+# CONFIGURATION - UPDATE THIS PATH
+# ==============================================================================
+H5AD_PATH       <- "integrated_scvi.h5ad"
+
 CELLTYPES       <- c("Hep-01", "Hep-02", "Hep-03", "Hep-04",
-                      "Hep-05", "Hep-06", "Hep-07")
+                     "Hep-05", "Hep-06", "Hep-07")
 AGE_LEVELS      <- c("young", "mid_age", "old", "pre_geriatric", "geriatric")
 STAT_THRESHOLD  <- 40
 KMEANS_K        <- 2
@@ -55,27 +73,36 @@ FDR_CUTOFF      <- 0.05
 
 # Color palettes
 AGE_COLORS <- c(
-  "young"          = "lightblue",
-  "mid_age"        = "mediumseagreen",
-  "old"            = "goldenrod",
-  "pre_geriatric"  = "lightpink",
-  "geriatric"      = "red"
+  "young"          = "#1ABC9C",
+  "mid_age"        = "#F1C40F",
+  "old"            = "#C39BD3",
+  "pre_geriatric"  = "#2980B9",
+  "geriatric"      = "#E84393"
 )
 SEX_COLORS <- c("male" = "navy", "female" = "deeppink")
 
 CLUSTER_COLORS <- c(
   "1" = "forestgreen", "2" = "firebrick",
   "3" = "steelblue",   "4" = "darkorange",
-  "5" = "purple",       "6" = "gold"
+  "5" = "purple",      "6" = "gold"
 )
 
 
-# ============================================================
-# STEP 0: Load h5ad → Seurat & subset to Hepatocytes
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 0: Loading data & subsetting to Hepatocytes")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# HELPERS
+# ==============================================================================
+banner <- function(text) {
+  line <- paste(rep("=", 70), collapse = "")
+  message("\n", line)
+  message(text)
+  message(line)
+}
+
+
+# ==============================================================================
+# STEP 0: LOAD H5AD AND SUBSET TO HEPATOCYTES
+# ==============================================================================
+banner("STEP 0: Loading data and subsetting to Hepatocytes")
 
 seuratObj <- schard::h5ad2seurat(H5AD_PATH)
 message("  Full dataset: ", ncol(seuratObj), " cells x ", nrow(seuratObj), " genes")
@@ -84,15 +111,13 @@ data <- subset(seuratObj, subset = celltype == "Hepatocyte")
 message("  Hepatocytes:  ", ncol(data), " cells")
 message("  Sub-clusters: ", paste(sort(unique(data$celltype2)), collapse = ", "))
 message("  Sex:          ", paste(names(table(data$sex)), table(data$sex),
-                                   sep = "=", collapse = ", "))
+                                  sep = "=", collapse = ", "))
 
 
-# ============================================================
-# STEP 1: Pseudobulk aggregation + DESeq2 LRT (per celltype2)
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 1: Pseudobulk aggregation + DESeq2 LRT")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 1: PSEUDOBULK AGGREGATION + DESEQ2 LRT
+# ==============================================================================
+banner("STEP 1: Pseudobulk aggregation and DESeq2 LRT (~sex+age vs ~sex)")
 
 for (ct in CELLTYPES) {
 
@@ -101,16 +126,16 @@ for (ct in CELLTYPES) {
   # 1a. Subset
   data_ct <- tryCatch(
     subset(data, subset = celltype2 == ct),
-    error = function(e) { message("  Skipping ", ct, ": subset failed"); NULL }
+    error = function(e) { message("  [SKIP] ", ct, ": subset failed"); NULL }
   )
   if (is.null(data_ct) || ncol(data_ct) == 0) {
-    message("  Skipping ", ct, ": no cells found")
+    message("  [SKIP] ", ct, ": no cells found")
     next
   }
 
   meta_ct <- data_ct@meta.data
   if (length(unique(meta_ct$sample)) < 2) {
-    message("  Skipping ", ct, ": not enough samples (need >= 2)")
+    message("  [SKIP] ", ct, ": fewer than 2 samples")
     next
   }
 
@@ -138,14 +163,14 @@ for (ct in CELLTYPES) {
 
   valid <- !is.na(sample_info$age) & !is.na(sample_info$sex)
   if (sum(valid) < 2) {
-    message("  Skipping ", ct, ": not enough valid samples after filtering")
+    message("  [SKIP] ", ct, ": fewer than 2 valid samples after filtering")
     next
   }
 
   # 1d. Save pseudobulk intermediates
   saveRDS(bulk_counts, paste0("bulk_counts_", ct, ".rds"))
   saveRDS(sample_info, paste0("sample_info_", ct, ".rds"))
-  message("  Saved: bulk_counts_", ct, ".rds + sample_info_", ct, ".rds")
+  message("  [OK] bulk_counts_", ct, ".rds + sample_info_", ct, ".rds")
 
   # 1e. DESeq2 LRT: full ~sex+age vs reduced ~sex
   dds <- DESeqDataSetFromMatrix(
@@ -158,22 +183,20 @@ for (ct in CELLTYPES) {
 
   out_file <- paste0("deseq2_LRT_age_", ct, ".csv")
   write.csv(as.data.frame(res), file = out_file)
-  message("  Saved: ", out_file)
+  message("  [OK] ", out_file)
 
   # MA plot
-  pdf(paste0("plotMA_", ct, ".pdf"))
+  pdf(paste0("plotMA_", ct, ".pdf"), useDingbats = FALSE)
   plotMA(res, ylim = c(-5, 5), main = ct)
   dev.off()
-  message("  Saved: plotMA_", ct, ".pdf")
+  message("  [OK] plotMA_", ct, ".pdf")
 }
 
 
-# ============================================================
-# STEP 2: Extract significant DEGs (FDR < 0.05)
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 2: Extracting significant DEGs (FDR < ", FDR_CUTOFF, ")")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 2: EXTRACT SIGNIFICANT DEGs (FDR < 0.05)
+# ==============================================================================
+banner(paste0("STEP 2: Extracting significant DEGs (FDR < ", FDR_CUTOFF, ")"))
 
 result_files <- list.files(pattern = "^deseq2_LRT_age_Hep-0[1-7]\\.csv$")
 
@@ -182,7 +205,7 @@ for (file in result_files) {
   res_df <- read.csv(file, row.names = 1)
 
   if (!"padj" %in% colnames(res_df)) {
-    warning("  Skipping ", file, ": 'padj' column missing")
+    warning("  [SKIP] ", file, ": 'padj' column missing")
     next
   }
 
@@ -196,16 +219,14 @@ for (file in result_files) {
 
   output_file <- sub("\\.csv$", "_sig_FDR_lt_0.05.csv", file)
   write.csv(res_sig, output_file, quote = FALSE)
-  message("  Saved: ", output_file, " (", nrow(res_sig), " genes)")
+  message("  [OK] ", output_file, " (", nrow(res_sig), " genes)")
 }
 
 
-# ============================================================
-# STEP 3: Heatmaps — z-scored log1p pseudobulk, K-means
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 3: Generating heatmaps (z-scored log1p expression)")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 3: HEATMAPS - Z-SCORED LOG1P PSEUDOBULK + K-MEANS CLUSTERING
+# ==============================================================================
+banner("STEP 3: Generating heatmaps (z-scored log1p expression)")
 
 for (ct in CELLTYPES) {
 
@@ -214,14 +235,14 @@ for (ct in CELLTYPES) {
   # 3a. Load significant DE results
   res_file <- paste0("deseq2_LRT_age_", ct, "_sig_FDR_lt_0.05.csv")
   if (!file.exists(res_file)) {
-    message("  Skipping: ", res_file, " not found")
+    message("  [SKIP] ", res_file, " not found")
     next
   }
   res_sig <- read.csv(res_file, row.names = 1)
 
   strong_sig_genes <- rownames(res_sig[res_sig$stat > STAT_THRESHOLD, ])
   if (length(strong_sig_genes) < MIN_GENES) {
-    message("  Skipping ", ct, ": only ", length(strong_sig_genes),
+    message("  [SKIP] ", ct, ": only ", length(strong_sig_genes),
             " genes pass stat > ", STAT_THRESHOLD)
     next
   }
@@ -230,7 +251,7 @@ for (ct in CELLTYPES) {
   bulk_file <- paste0("bulk_counts_", ct, ".rds")
   info_file <- paste0("sample_info_", ct, ".rds")
   if (!file.exists(bulk_file) || !file.exists(info_file)) {
-    message("  Skipping: missing .rds files for ", ct)
+    message("  [SKIP] missing .rds files for ", ct)
     next
   }
   bulk_counts <- readRDS(bulk_file)
@@ -239,7 +260,7 @@ for (ct in CELLTYPES) {
   # 3c. Z-scored expression matrix
   strong_sig_genes <- intersect(strong_sig_genes, rownames(bulk_counts))
   if (length(strong_sig_genes) < MIN_GENES) {
-    message("  Skipping: not enough genes after intersect")
+    message("  [SKIP] not enough genes after intersect")
     next
   }
 
@@ -266,7 +287,7 @@ for (ct in CELLTYPES) {
   anno_combined <- rbind(anno_col[male_samples, , drop = FALSE],
                          anno_col[female_samples, , drop = FALSE])
 
-  # 3f. K-means row clustering
+  # 3f. K-means row clustering (pre-pass for ordering)
   heatmap_km <- pheatmap::pheatmap(
     expr_combined,
     annotation_col           = anno_combined,
@@ -301,7 +322,7 @@ for (ct in CELLTYPES) {
   names(cluster_cols) <- as.character(seq_len(KMEANS_K))
 
   col_fun_lfc      <- colorRamp2(c(-LFC_CAP, 0, LFC_CAP),
-                                  c("darkblue", "white", "darkred"))
+                                 c("darkblue", "white", "darkred"))
   lfc_strip_colors <- colorRampPalette(c("darkblue", "white", "darkred"))(100)
 
   annotation_colors_all <- c(
@@ -349,18 +370,16 @@ for (ct in CELLTYPES) {
   pdf_out <- paste0(safe_name, "_heatmap_stat", STAT_THRESHOLD, ".pdf")
   png_out <- paste0(safe_name, "_heatmap_stat", STAT_THRESHOLD, ".png")
 
-  ggsave(pdf_out, final_plot, width = 10, height = 15, dpi = 300)
+  ggsave(pdf_out, final_plot, width = 10, height = 15, dpi = 300, useDingbats = FALSE)
   ggsave(png_out, final_plot, width = 10, height = 15, dpi = 300)
-  message("  Saved: ", pdf_out, " + ", png_out)
+  message("  [OK] ", pdf_out, " + ", png_out)
 }
 
 
-# ============================================================
-# STEP 4: Export cluster gene lists (CSVs) for Reactome
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 4: Exporting cluster gene CSVs for Reactome")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 4: EXPORT CLUSTER GENE LISTS (CSVs) FOR REACTOME
+# ==============================================================================
+banner("STEP 4: Exporting cluster gene CSVs for downstream Reactome enrichment")
 
 for (ct in CELLTYPES) {
 
@@ -371,7 +390,7 @@ for (ct in CELLTYPES) {
   info_file <- paste0("sample_info_", ct, ".rds")
 
   if (!file.exists(res_file) || !file.exists(bulk_file) || !file.exists(info_file)) {
-    message("  Skipping: required files not found")
+    message("  [SKIP] required files not found")
     next
   }
 
@@ -383,7 +402,7 @@ for (ct in CELLTYPES) {
   strong_genes <- intersect(strong_genes, rownames(bulk_counts))
 
   if (length(strong_genes) < MIN_GENES) {
-    message("  Skipping: only ", length(strong_genes), " genes pass threshold")
+    message("  [SKIP] only ", length(strong_genes), " genes pass threshold")
     next
   }
 
@@ -437,12 +456,10 @@ for (ct in CELLTYPES) {
 }
 
 
-# ============================================================
-# STEP 5: Merged Excel — all FDR < 0.05 DEGs per celltype
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 5: Merged Excel — all FDR < 0.05 DEGs")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 5: MERGED EXCEL - ALL FDR < 0.05 DEGs PER CELLTYPE
+# ==============================================================================
+banner("STEP 5: Merged Excel - all FDR < 0.05 DEGs (one tab per sub-cluster)")
 
 wb1 <- createWorkbook()
 
@@ -450,29 +467,25 @@ for (ct in CELLTYPES) {
 
   res_file <- paste0("deseq2_LRT_age_", ct, "_sig_FDR_lt_0.05.csv")
   if (!file.exists(res_file)) {
-    message("  Skipping ", ct, ": ", res_file, " not found")
+    message("  [SKIP] ", ct, ": ", res_file, " not found")
     next
   }
 
   res_sig <- read.csv(res_file, row.names = 1)
 
-  # Gene column from rownames, reorder gene first
   res_sig$gene <- rownames(res_sig)
   col_order <- c("gene", setdiff(colnames(res_sig), "gene"))
   res_sig <- res_sig[, col_order]
   res_sig <- res_sig[order(res_sig$padj), ]
 
-  # Write tab
   addWorksheet(wb1, ct)
   writeData(wb1, ct, res_sig, rowNames = FALSE)
 
-  # Format: auto-width + bold blue header
   setColWidths(wb1, ct, cols = seq_along(col_order), widths = "auto")
   headerStyle <- createStyle(textDecoration = "Bold", border = "Bottom",
-                              fgFill = "#D9E1F2")
+                             fgFill = "#D9E1F2")
   addStyle(wb1, ct, headerStyle, rows = 1, cols = seq_along(col_order))
 
-  # Highlight padj < 0.001 rows in yellow
   if (any(res_sig$padj < 0.001, na.rm = TRUE)) {
     highlight_rows <- which(res_sig$padj < 0.001) + 1
     highlightStyle <- createStyle(fgFill = "#FFF2CC")
@@ -480,26 +493,24 @@ for (ct in CELLTYPES) {
              cols = seq_along(col_order), gridExpand = TRUE, stack = TRUE)
   }
 
-  message("  Tab: ", ct, " — ", nrow(res_sig), " genes")
+  message("  Tab: ", ct, " - ", nrow(res_sig), " genes")
 }
 
 out1 <- "DESeq2_LRT_all_celltypes_FDR005.xlsx"
 saveWorkbook(wb1, out1, overwrite = TRUE)
-message("  Saved: ", out1)
+message("  [OK] ", out1)
 
 
-# ============================================================
-# STEP 6: Merged Excel — heatmap genes (stat > 40) + cluster
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("STEP 6: Merged Excel — heatmap genes (stat > ", STAT_THRESHOLD, ") + clusters")
-message(paste(rep("=", 60), collapse = ""))
+# ==============================================================================
+# STEP 6: MERGED EXCEL - HEATMAP GENES (stat > THRESHOLD) + CLUSTER COLUMN
+# ==============================================================================
+banner(paste0("STEP 6: Merged Excel - heatmap genes (stat > ", STAT_THRESHOLD, ") + clusters"))
 
 wb2 <- createWorkbook()
 
 # Cluster row fill colors
 cluster_fill <- c("1" = "#E8F5E9", "2" = "#FFEBEE", "3" = "#E3F2FD",
-                   "4" = "#FFF3E0", "5" = "#F3E5F5", "6" = "#FFFDE7")
+                  "4" = "#FFF3E0", "5" = "#F3E5F5", "6" = "#FFFDE7")
 
 for (ct in CELLTYPES) {
 
@@ -510,7 +521,7 @@ for (ct in CELLTYPES) {
   info_file <- paste0("sample_info_", ct, ".rds")
 
   if (!file.exists(res_file) || !file.exists(bulk_file) || !file.exists(info_file)) {
-    message("  Skipping: required files not found")
+    message("  [SKIP] required files not found")
     next
   }
 
@@ -518,20 +529,17 @@ for (ct in CELLTYPES) {
   bulk_counts <- readRDS(bulk_file)
   sample_info <- readRDS(info_file)
 
-  # Filter stat > threshold
   strong_genes <- rownames(res_sig[res_sig$stat > STAT_THRESHOLD, ])
   strong_genes <- intersect(strong_genes, rownames(bulk_counts))
 
   if (length(strong_genes) < MIN_GENES) {
-    message("  Skipping: only ", length(strong_genes), " genes pass stat > ", STAT_THRESHOLD)
+    message("  [SKIP] only ", length(strong_genes), " genes pass stat > ", STAT_THRESHOLD)
     next
   }
 
-  # Z-score (same as heatmap)
   expr_mat    <- bulk_counts[strong_genes, ]
   expr_scaled <- t(scale(t(log1p(expr_mat))))
 
-  # Order samples
   anno_col <- sample_info[, c("age", "sex")]
   anno_col$age <- factor(anno_col$age, levels = AGE_LEVELS)
   anno_col$sex <- factor(anno_col$sex, levels = c("male", "female"))
@@ -543,7 +551,6 @@ for (ct in CELLTYPES) {
   expr_combined  <- cbind(expr_scaled[, male_samples, drop = FALSE],
                           expr_scaled[, female_samples, drop = FALSE])
 
-  # K-means (same as heatmap)
   hm <- pheatmap::pheatmap(
     expr_combined,
     cluster_rows = TRUE, cluster_cols = FALSE,
@@ -552,7 +559,6 @@ for (ct in CELLTYPES) {
   )
   gene_clusters <- hm$kmeans$cluster
 
-  # Build output
   out_df <- data.frame(
     gene           = names(gene_clusters),
     baseMean       = res_sig[names(gene_clusters), "baseMean"],
@@ -566,17 +572,14 @@ for (ct in CELLTYPES) {
   )
   out_df <- out_df[order(out_df$cluster, -out_df$stat), ]
 
-  # Write tab
   addWorksheet(wb2, ct)
   writeData(wb2, ct, out_df, rowNames = FALSE)
 
-  # Format: auto-width + bold blue header
   setColWidths(wb2, ct, cols = seq_along(out_df), widths = "auto")
   headerStyle <- createStyle(textDecoration = "Bold", border = "Bottom",
-                              fgFill = "#D9E1F2")
+                             fgFill = "#D9E1F2")
   addStyle(wb2, ct, headerStyle, rows = 1, cols = seq_along(out_df))
 
-  # Color-code entire row by cluster
   for (k in seq_len(KMEANS_K)) {
     cluster_rows <- which(out_df$cluster == k) + 1
     if (length(cluster_rows) == 0) next
@@ -587,31 +590,29 @@ for (ct in CELLTYPES) {
              cols = seq_along(out_df), gridExpand = TRUE, stack = TRUE)
   }
 
-  # Summary
   cluster_summary <- table(out_df$cluster)
   summary_str <- paste(paste0("C", names(cluster_summary), "=",
-                               cluster_summary), collapse = ", ")
-  message("  Tab: ", ct, " — ", nrow(out_df), " genes (", summary_str, ")")
+                              cluster_summary), collapse = ", ")
+  message("  Tab: ", ct, " - ", nrow(out_df), " genes (", summary_str, ")")
 }
 
 out2 <- "Heatmap_genes_stat40_with_clusters.xlsx"
 saveWorkbook(wb2, out2, overwrite = TRUE)
-message("  Saved: ", out2)
+message("  [OK] ", out2)
 
 
-# ============================================================
-# Done
-# ============================================================
-message("\n", paste(rep("=", 60), collapse = ""))
-message("R PIPELINE COMPLETE — ALL 7 STEPS")
-message(paste(rep("-", 60), collapse = ""))
+# ==============================================================================
+# DONE
+# ==============================================================================
+banner("R PIPELINE COMPLETE - ALL STEPS")
 message("  STEP 0: h5ad -> Seurat -> Hepatocyte subset")
-message("  STEP 1: Pseudobulk + DESeq2 LRT        -> deseq2_LRT_age_*.csv")
-message("  STEP 2: FDR < 0.05 filtering            -> *_sig_FDR_lt_0.05.csv")
-message("  STEP 3: Z-scored heatmaps               -> *_heatmap_stat", STAT_THRESHOLD, ".pdf/.png")
-message("  STEP 4: Cluster gene CSVs               -> *_cluster_*_genes_cluster.csv")
-message("  STEP 5: Merged Excel (FDR < 0.05)       -> ", out1)
+message("  STEP 1: Pseudobulk + DESeq2 LRT          -> deseq2_LRT_age_*.csv")
+message("  STEP 2: FDR < 0.05 filtering             -> *_sig_FDR_lt_0.05.csv")
+message("  STEP 3: Z-scored heatmaps                -> *_heatmap_stat", STAT_THRESHOLD, ".pdf/.png")
+message("  STEP 4: Cluster gene CSVs                -> *_cluster_*_genes_cluster.csv")
+message("  STEP 5: Merged Excel (FDR < 0.05)        -> ", out1)
 message("  STEP 6: Merged Excel (stat > ", STAT_THRESHOLD, " + clusters) -> ", out2)
-message(paste(rep("-", 60), collapse = ""))
-message("  Next: Run hepatocyte_complete_python_pipeline.py")
-message(paste(rep("=", 60), collapse = ""))
+message(paste(rep("=", 70), collapse = ""))
+
+# Save session info for reproducibility
+sessionInfo()
