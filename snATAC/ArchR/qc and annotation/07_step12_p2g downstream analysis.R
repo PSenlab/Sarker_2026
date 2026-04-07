@@ -4,14 +4,14 @@
 # ==============================================================================
 #
 # Description:
-#   Extracts peak-to-gene (P2G) linkages from ArchR projects, performs k-means
+#   Extracts Peak-to-Gene (P2G) linkages from ArchR projects, performs k-means
 #   clustering on P2G heatmaps, annotates peaks using ENCODE cCREs and
 #   ChIPseeker, and generates cross-celltype stacked barplots.
 #
 # Prerequisites:
 #   - Run Step 11 (archr_peak_calling_p2g.R) to generate P2G linkages
 #   - Download ENCODE cCREs: mm10-cCREs.bed from ENCODE SCREEN
-#     Run Steps 12.1-12.10 for EACH cell type, then run Steps 12.11-12.12
+#   - Run Steps 12.1-12.10 for EACH cell type, then run Steps 12.11-12.12
 #     once after all cell types are processed
 #
 # Input:
@@ -81,7 +81,9 @@ ENCODE_CCRE_PATH <- "mm10-cCREs.bed"
 OUTPUT_DIR <- "Step12_P2G_Analysis"
 
 # Analysis parameters
-K_CLUSTERS <- 3                  # Number of k-means clusters for P2G heatmap
+# K_CLUSTERS is set per cell type - use k=4 for Hepatocyte;
+# other cell types may use different values (commonly 3)
+K_CLUSTERS <- 4                  # Number of k-means clusters for P2G heatmap (Hepatocyte default)
 P2G_COR_CUTOFF <- 0.45           # Correlation cutoff for P2G extraction
 COA_COR_CUTOFF <- 0.5            # Correlation cutoff for co-accessibility
 
