@@ -608,7 +608,15 @@ print("=" * 70)
 print("ANALYSIS 5: Boxplots (celltype2 proportions by age)")
 print("=" * 70)
 
-for sex in ["female", "male"]:
+# Per-sex counts + ANOVA, then a single side-by-side figure
+# (male left, female right) matching the paper's panel (d) legend.
+
+sex_results = {}
+
+for sex in SEX_ORDER:
+    if sex not in adata.obs[SEX_COL].unique():
+        continue
+
     sub = adata[adata.obs[SEX_COL] == sex].copy()
     ct_counts = (
         sub.obs.groupby([SAMPLE_COL, CELLTYPE2_COL])
@@ -619,6 +627,7 @@ for sex in ["female", "male"]:
     ct_counts[AGE_COL] = ct_counts[SAMPLE_COL].map(meta[AGE_COL])
     ct_counts[SEX_COL] = sex
 
+    # Per-subcluster one-way ANOVA, FDR-BH corrected
     anova_rows = []
     for ct in ct_counts[CELLTYPE2_COL].unique():
         ct_sub = ct_counts[ct_counts[CELLTYPE2_COL] == ct]
@@ -639,46 +648,93 @@ for sex in ["female", "male"]:
     )
     ct_counts["significance"] = ct_counts["significance"].fillna("")
 
-    present_ages = [a for a in AGE_ORDER if a in ct_counts[AGE_COL].dropna().unique()]
-    ct_order = ct_counts[CELLTYPE2_COL].unique()
+    sex_results[sex] = {"counts": ct_counts, "anova": anova_df}
 
-    fig, ax = plt.subplots(figsize=(14, 8))
+    # Per-sex tables
+    ct_counts.to_csv(f"{RESULTS_DIR}/{sex}_celltype2_percentages.csv", index=False)
+    anova_df.to_csv(f"{RESULTS_DIR}/{sex}_celltype2_anova.csv", index=False)
+
+# Combined side-by-side figure - male left, female right
+ct_order = [ct for ct in HEP_ORDER
+            if any(ct in sex_results[s]["counts"][CELLTYPE2_COL].unique()
+                   for s in sex_results)]
+global_present_ages = [
+    a for a in AGE_ORDER
+    if any(a in sex_results[s]["counts"][AGE_COL].dropna().unique()
+           for s in sex_results)
+]
+
+# Red-dot outlier styling per the figure legend
+flierprops = dict(
+    marker="o", markerfacecolor="red", markeredgecolor="red",
+    markersize=4, linestyle="none",
+)
+
+panel_sexes = [s for s in ["male", "female"] if s in sex_results]
+fig, axes = plt.subplots(
+    1, len(panel_sexes), figsize=(7 * len(panel_sexes), 7),
+    sharey=True,
+)
+if len(panel_sexes) == 1:
+    axes = [axes]
+
+ymax_global = max(
+    sex_results[s]["counts"]["percentage"].max() for s in panel_sexes
+)
+
+for ax, sex in zip(axes, panel_sexes):
+    ct_counts = sex_results[sex]["counts"]
+    sex_present_ages = [
+        a for a in AGE_ORDER if a in ct_counts[AGE_COL].dropna().unique()
+    ]
+
     sns.boxplot(
         data=ct_counts, x=CELLTYPE2_COL, y="percentage", hue=AGE_COL,
-        order=ct_order, hue_order=present_ages,
-        palette={k: AGE_PALETTE[k] for k in present_ages},
-        showcaps=True, fliersize=3, dodge=True, ax=ax,
+        order=ct_order, hue_order=sex_present_ages,
+        palette={k: AGE_PALETTE[k] for k in sex_present_ages},
+        showcaps=True, flierprops=flierprops, dodge=True, ax=ax,
     )
-    ymax = ct_counts["percentage"].max()
-    ax.set_ylim(0, ymax * 1.2)
+    ax.set_ylim(0, ymax_global * 1.2)
 
+    # Significance annotation per subcluster
     for i, ct in enumerate(ct_order):
         sub_ct = ct_counts[ct_counts[CELLTYPE2_COL] == ct]
         if sub_ct.empty:
             continue
         star = sub_ct["significance"].iloc[0]
-        label, color = (star, "red") if star else ("ns", "darkblue")
-        ax.text(i, sub_ct["percentage"].max() * 1.1, label,
-                ha="center", va="bottom", fontsize=18, color=color)
+        label, color = (star, "red") if star else ("n.s.", "darkblue")
+        ax.text(
+            i, sub_ct["percentage"].max() * 1.08, label,
+            ha="center", va="bottom", fontsize=14, color=color,
+        )
 
-    handles = [Patch(facecolor=AGE_PALETTE[a], edgecolor="black", label=a) for a in present_ages]
-    ax.legend(
-        handles=handles, title="Age Group",
-        bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False,
-    )
-    ax.set_title(f"{sex.capitalize()} Hepatocytes: Sub-cluster Proportions by Age", fontsize=16)
-    ax.set_ylabel("Percentage of Cells per Sample", fontsize=12)
+    # Legend only on the right-most panel
+    if sex == panel_sexes[-1]:
+        handles = [
+            Patch(facecolor=AGE_PALETTE[a], edgecolor="black", label=a)
+            for a in global_present_ages
+        ]
+        ax.legend(
+            handles=handles, title="Age Group",
+            bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False,
+        )
+    else:
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+
+    ax.set_title(sex.capitalize(), fontsize=14, fontweight="bold", loc="left")
     ax.set_xlabel("Hepatocyte Sub-cluster", fontsize=12)
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
+    ax.set_ylabel("% of cells per sample" if sex == panel_sexes[0] else "", fontsize=12)
+    for label in ax.get_xticklabels():
+        label.set_rotation(45)
+        label.set_horizontalalignment("right")
 
-    fname = f"{FIGURES_DIR}/{sex}_boxplot_celltype2_by_age.pdf"
-    fig.savefig(fname, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] {fname}")
-
-    ct_counts.to_csv(f"{RESULTS_DIR}/{sex}_celltype2_percentages.csv", index=False)
-    anova_df.to_csv(f"{RESULTS_DIR}/{sex}_celltype2_anova.csv", index=False)
+plt.tight_layout()
+fname = f"{FIGURES_DIR}/boxplot_celltype2_by_age_male_female.pdf"
+fig.savefig(fname, bbox_inches="tight", dpi=300)
+plt.close(fig)
+print(f"  [OK] {fname}")
 
 
 # ==============================================================================
