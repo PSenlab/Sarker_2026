@@ -1,30 +1,92 @@
-# ============================================================
-# 10. Senescence scoring — Classical markers, SHGS, SenMayo,
-#     SenNet module scores + heatmaps
-# ============================================================
-print("\n" + "=" * 60)
-print("ANALYSIS 10: Senescence scoring (SHGS, SenMayo, SenNet)")
-print("=" * 60)
+#!/usr/bin/env python3
+# ==============================================================================
+# Senescence Scoring in Hepatocyte Sub-Clusters Across Aging
+# ==============================================================================
+#
+# Description:
+#   Scores hepatocyte cells for senescence using four complementary gene sets:
+#     1. Classical senescence markers (per-gene scoring)
+#     2. SHGS  - Senescent Hepatocyte Gene Signature (Du et al. 2025 Nat Commun,
+#                100-gene palbociclib / NRAS(G12V) mouse ortholog set)
+#     3. SenMayo - 125-gene SASP/senescence panel (Saul et al. 2022 Nat Commun)
+#     4. SenNet  - NIH SenNet consortium core biomarkers (2024)
+#
+#   For each module, produces side-by-side male/female heatmaps of mean module
+#   score per sub-cluster x age, and a combined summary heatmap across all
+#   three signatures.
+#
+# Input:
+#   - Annotated AnnData (.h5ad) with celltype, celltype2 (sub-clusters),
+#     sex, age labels
+#
+# Output:
+#   Figures:
+#     - panel_g_senescence_module_scores_combined.pdf
+#         (single figure: 3 signatures x 2 sexes, each cell = celltype2 x age)
+#     - classical_senescence_heatmap_male_female.pdf
+#         (panel h: z-scored classical markers, male top / female bottom)
+#
+#   Tables:
+#     - classical_senescence_zscore_{sex}.csv
+#     - module_score_{signature}_{sex}.csv
+#     - senescence_module_scores_summary.csv
+#
+#
+# ==============================================================================
 
+import os
+import numpy as np
 import pandas as pd
+import anndata as ad
+import scanpy as sc
 import seaborn as sns
 import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib as mpl
 
-# ------------------------------------------------------------------
-# 10a. Define senescence gene sets
-# ------------------------------------------------------------------
+# Global plot settings
+mpl.rcParams["font.family"] = "Arial"
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
 
-# --- Classical senescence markers (individual gene scoring) ---
+
+# ==============================================================================
+# CONFIGURATION - UPDATE THIS PATH
+# ==============================================================================
+
+DATA_PATH = "integrated_scvi.h5ad"
+FIGURES_DIR = "figures"
+RESULTS_DIR = "results"
+
+os.makedirs(FIGURES_DIR, exist_ok=True)
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# Column names
+CELLTYPE_COL = "celltype"
+CELLTYPE2_COL = "celltype2"
+SEX_COL = "sex"
+AGE_COL = "age"
+
+# Ordering
+AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
+AGE_ALIASES = {"midage": "mid_age", "pregeriatric": "pre_geriatric"}
+SEX_ORDER = ["male", "female"]
+HEP_ORDER = [f"Hep-0{i}" for i in range(1, 8)]
+
+
+# ==============================================================================
+# SENESCENCE GENE SETS
+# ==============================================================================
+
+# Classical senescence markers (per-gene scoring)
 CLASSICAL_SENESCENCE_GENES = [
     "Cdkn1a", "Cdkn2a", "Trp53", "Rb1", "Mdm2",
     "Il6", "Ccl2", "Cxcl1", "Serpine1", "Igfbp7",
 ]
 
-# --- SHGS: Senescent Hepatocyte Gene Signature ---
-# (Du et al. 2025, Nat Commun — 100-gene overlap of in vitro
-#  palbociclib-treated Huh7 + in vivo NRASG12V hepatocytes,
-#  mouse orthologs from the Zenodo senescence_signatures.rds)
+# SHGS: Senescent Hepatocyte Gene Signature
+# Du et al. 2025, Nat Commun - 100-gene overlap of in vitro palbociclib-treated
+# Huh7 + in vivo NRAS(G12V) hepatocytes, mouse orthologs from the Zenodo
+# senescence_signatures.rds
 SHGS_GENES = [
     "Gm29685", "Gm19510", "Cxcl10", "4930546K05Rik", "Tox2",
     "Gm15418", "Glis3", "Rsad2", "Ly6m", "Osmr",
@@ -61,8 +123,8 @@ SHGS_GENES = [
     "Arhgef2", "Tnfrsf23", "Itpkc", "Nlrp9c",
 ]
 
-# --- SenMayo: 125-gene SASP/senescence panel ---
-# (Saul et al. 2022, Nat Commun — mouse gene names)
+# SenMayo: 125-gene SASP/senescence panel
+# Saul et al. 2022, Nat Commun - mouse gene names
 SENMAYO_GENES = [
     "Acvr1b", "Ang", "Angpt1", "Angptl4", "Areg", "Axl", "Bex3",
     "Bmp2", "Bmp6", "C3", "Ccl1", "Ccl2", "Ccl20", "Ccl24",
@@ -84,8 +146,7 @@ SENMAYO_GENES = [
     "Wnt16", "Wnt2",
 ]
 
-# --- SenNet: Core senescence biomarkers ---
-# (NIH SenNet consortium 2024 recommendations)
+# SenNet: Core senescence biomarkers (NIH SenNet consortium 2024)
 SENNET_GENES = [
     # Cell Cycle Arrest
     "Cdkn2a", "Cdkn1a", "Trp53", "Rb1",
@@ -103,11 +164,81 @@ SENNET_GENES = [
     "Glb1",
 ]
 
-# ------------------------------------------------------------------
-# 10b. Classical senescence markers — per-gene scoring + z-scored
-#      heatmap per sex (celltype2 as columns)
-# ------------------------------------------------------------------
-print("\n--- 10b: Classical senescence marker heatmaps ---")
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+def score_module(adata, gene_list, score_name, title_label):
+    """
+    Score cells with sc.tl.score_genes and return a dict of per-sex pivot
+    tables (celltype2 rows x age columns, mean score).
+    """
+    present = [g for g in gene_list if g in adata.var_names]
+    use_raw = False
+    if not present and adata.raw is not None:
+        present = [g for g in gene_list if g in adata.raw.var_names]
+        use_raw = bool(present)
+    print(f"  {title_label}: {len(present)}/{len(gene_list)} genes found")
+
+    if not present:
+        print(f"  [SKIP] No genes found for {title_label}")
+        return None
+
+    sc.tl.score_genes(adata, gene_list=present, score_name=score_name, use_raw=use_raw)
+
+    dfs = {}
+    for sex in SEX_ORDER:
+        if sex not in adata.obs[SEX_COL].unique():
+            continue
+        sub = adata.obs[adata.obs[SEX_COL] == sex]
+        pivot = sub.pivot_table(
+            index=CELLTYPE2_COL, columns=AGE_COL,
+            values=score_name, aggfunc="mean",
+        )
+        row_order = [ct for ct in HEP_ORDER if ct in pivot.index]
+        col_order = [a for a in AGE_ORDER if a in pivot.columns]
+        pivot = pivot.loc[row_order, col_order]
+        dfs[sex] = pivot
+
+        # Save underlying data
+        out = f"{RESULTS_DIR}/module_score_{title_label}_{sex}.csv"
+        pivot.to_csv(out)
+        print(f"  [OK] {out}")
+
+    return dfs
+
+
+# ==============================================================================
+# 0. LOAD DATA AND SUBSET TO HEPATOCYTES
+# ==============================================================================
+
+print()
+print("=" * 70)
+print("ANALYSIS 0: Load data and subset to Hepatocytes")
+print("=" * 70)
+
+adata = ad.read_h5ad(DATA_PATH)
+
+# Harmonize age labels
+age = adata.obs[AGE_COL].astype(str).str.strip().str.lower().replace(AGE_ALIASES)
+adata.obs[AGE_COL] = pd.Categorical(age, categories=AGE_ORDER, ordered=True)
+
+print(f"  Full dataset: {adata.n_obs:,} cells x {adata.n_vars:,} genes")
+
+adata = adata[adata.obs[CELLTYPE_COL] == "Hepatocyte"].copy()
+print(f"  Hepatocytes: {adata.n_obs:,} cells")
+print(f"  Sub-clusters: {sorted(adata.obs[CELLTYPE2_COL].unique().tolist())}")
+
+
+# ==============================================================================
+# 1. CLASSICAL SENESCENCE MARKERS - PER-GENE SCORING + Z-SCORED HEATMAP
+# ==============================================================================
+
+print()
+print("=" * 70)
+print("ANALYSIS 1: Classical senescence markers (per-gene scoring)")
+print("=" * 70)
 
 # Score each gene individually
 for gene in CLASSICAL_SENESCENCE_GENES:
@@ -117,164 +248,200 @@ for gene in CLASSICAL_SENESCENCE_GENES:
     elif adata.raw is not None and gene in adata.raw.var_names:
         sc.tl.score_genes(adata, gene_list=[gene], score_name=score_name, use_raw=True)
     else:
-        print(f"  ⚠️ {gene} not found — skipping")
+        print(f"  [SKIP] {gene} not found")
 
-# Build list of score columns that exist
-valid_genes = [
-    "Cdkn1a", "Cdkn2a", "Trp53", "Rb1", "Mdm2",
-    "Il6", "Ccl2", "Cxcl1", "Serpine1", "Igfbp7",
+score_cols = [
+    f"{g}_score" for g in CLASSICAL_SENESCENCE_GENES
+    if f"{g}_score" in adata.obs.columns
 ]
-score_cols = [f"{g}_score" for g in valid_genes if f"{g}_score" in adata.obs.columns]
 scored_genes = [col.replace("_score", "") for col in score_cols]
 
-for sex in adata.obs["sex"].unique():
-    print(f"  Processing: {sex}")
-    df_sex = adata.obs[adata.obs["sex"] == sex]
+# Per-sex z-scored (gene x celltype2) matrices
+zscore_per_sex = {}
+for sex in SEX_ORDER:
+    if sex not in adata.obs[SEX_COL].unique():
+        continue
+    df_sex = adata.obs[adata.obs[SEX_COL] == sex]
 
     # Mean score per gene across celltype2
-    df = df_sex.groupby("celltype2")[score_cols].mean().T  # genes × celltypes
-    # Z-score row-wise
-    df_zscore = df.sub(df.mean(axis=1), axis=0).div(df.std(axis=1), axis=0)
+    df = df_sex.groupby(CELLTYPE2_COL)[score_cols].mean().T  # genes x celltypes
 
-    # Reindex to gene order
+    # Reorder celltype2 columns by HEP_ORDER
+    col_order = [ct for ct in HEP_ORDER if ct in df.columns]
+    df = df[col_order]
+
+    # Row-wise z-score (per gene, across cell types)
+    df_zscore = df.sub(df.mean(axis=1), axis=0).div(df.std(axis=1), axis=0)
     df_zscore["Gene"] = df_zscore.index.str.replace("_score", "", regex=False)
     df_zscore = df_zscore.set_index("Gene").loc[scored_genes]
 
-    # Plot
-    plt.figure(figsize=(10, 0.4 * len(df_zscore)))
-    sns.heatmap(
-        df_zscore, cmap="coolwarm", center=0, linewidths=0.05,
-        xticklabels=True, yticklabels=True,
-        cbar_kws={"label": "Z-score"},
-    )
-    plt.title(f"Classical Senescence Markers – {sex}")
-    plt.xlabel("Cell Type")
-    plt.ylabel("Gene")
-    plt.tight_layout()
-
-    fname = f"{FIGURES_DIR}/senescence_score_heatmap_{sex}.pdf"
-    plt.savefig(fname, dpi=300)
-    plt.close()
-    print(f"  Saved: {fname}")
-
-
-# ------------------------------------------------------------------
-# 10c. Helper — score a gene set & produce side-by-side male/female
-#      heatmap (celltype2 × age, mean module score)
-# ------------------------------------------------------------------
-def score_and_plot_module(adata, gene_list, score_name, title_label):
-    """
-    Score cells with sc.tl.score_genes, then create a side-by-side
-    male / female heatmap of mean module score (celltype2 × age).
-    Returns the score column name added to adata.obs.
-    """
-    # Filter to genes present
-    present = [g for g in gene_list if g in adata.var_names]
-    use_raw = False
-    if not present and adata.raw is not None:
-        present = [g for g in gene_list if g in adata.raw.var_names]
-        use_raw = bool(present)
-    print(f"  {title_label}: {len(present)}/{len(gene_list)} genes found")
-
-    if not present:
-        print(f"  ⚠️ No genes found for {title_label} — skipping")
-        return None
-
-    sc.tl.score_genes(adata, gene_list=present, score_name=score_name, use_raw=use_raw)
-
-    # Pivot: celltype2 (rows) × age (columns), mean score — per sex
-    dfs = {}
-    for sex in SEX_ORDER:
-        sub = adata.obs[adata.obs[SEX_COL] == sex]
-        pivot = sub.pivot_table(
-            index=CELLTYPE2_COL, columns=AGE_COL,
-            values=score_name, aggfunc="mean",
-        )
-        # Reorder
-        row_order = [ct for ct in HEP_ORDER if ct in pivot.index]
-        col_order = [a for a in AGE_ORDER if a in pivot.columns]
-        pivot = pivot.loc[row_order, col_order]
-        dfs[sex] = pivot
-
-    df_male = dfs.get("male", pd.DataFrame())
-    df_female = dfs.get("female", pd.DataFrame())
-
-    if df_male.empty and df_female.empty:
-        print(f"  ⚠️ No data for {title_label} — skipping plot")
-        return score_name
-
-    # Determine shared color range
-    all_vals = pd.concat(
-        [df_male.stack(), df_female.stack()], ignore_index=True
-    ).dropna()
-    vmin = float(all_vals.min())
-    vmax = float(all_vals.max())
-
-    n_rows = max(len(df_male), len(df_female), 1)
-    fig, axes = plt.subplots(
-        1, 2, figsize=(18, max(4, 0.4 * n_rows)), sharey=True
-    )
-
-    # Male
-    if not df_male.empty:
-        sns.heatmap(
-            df_male, ax=axes[0], annot=True, fmt=".3f",
-            cmap="coolwarm", vmin=vmin, vmax=vmax,
-            cbar_kws={"label": "Avg Module Score"},
-        )
-    axes[0].set_title("Male")
-    axes[0].set_xlabel("Age Group")
-    axes[0].set_ylabel("Cell Type")
-
-    # Female
-    if not df_female.empty:
-        sns.heatmap(
-            df_female, ax=axes[1], annot=True, fmt=".3f",
-            cmap="coolwarm", vmin=vmin, vmax=vmax,
-            cbar_kws={"label": "Avg Module Score"},
-        )
-    axes[1].set_title("Female")
-    axes[1].set_xlabel("Age Group")
-    axes[1].set_ylabel("")
-
-    plt.suptitle(f"module_score_{title_label}", fontsize=14)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-
-    fname_pdf = f"{FIGURES_DIR}/module_score_{title_label}.pdf"
-    fname_png = f"{FIGURES_DIR}/module_score_{title_label}.png"
-    fig.savefig(fname_pdf, dpi=300, bbox_inches="tight")
-    fig.savefig(fname_png, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved: {fname_pdf}")
-    print(f"  Saved: {fname_png}")
+    zscore_per_sex[sex] = df_zscore
 
     # Save underlying data
-    for sex, df in dfs.items():
-        out = f"{RESULTS_DIR}/module_score_{title_label}_{sex}.csv"
-        df.to_csv(out)
-        print(f"  Saved: {out}")
+    out_csv = f"{RESULTS_DIR}/classical_senescence_zscore_{sex}.csv"
+    df_zscore.to_csv(out_csv)
+    print(f"  [OK] {out_csv}")
 
-    return score_name
+# Combined figure - male on top, female on bottom (matching panel h)
+panel_sexes = [s for s in SEX_ORDER if s in zscore_per_sex]
+
+if panel_sexes:
+    # Shared color range across both sexes
+    all_vals = pd.concat(
+        [zscore_per_sex[s].stack() for s in panel_sexes], ignore_index=True,
+    ).dropna()
+    vmax = float(max(abs(all_vals.min()), abs(all_vals.max())))
+    vmin = -vmax
+
+    n_rows = len(scored_genes)
+    fig, axes = plt.subplots(
+        len(panel_sexes), 1,
+        figsize=(8, max(6, 0.45 * n_rows * len(panel_sexes))),
+        sharex=True,
+    )
+    if len(panel_sexes) == 1:
+        axes = [axes]
+
+    for ax, sex in zip(axes, panel_sexes):
+        df_zscore = zscore_per_sex[sex]
+        sns.heatmap(
+            df_zscore, ax=ax,
+            cmap="coolwarm", center=0,
+            vmin=vmin, vmax=vmax,
+            linewidths=0.05,
+            xticklabels=True, yticklabels=True,
+            cbar=True,
+            cbar_kws={"label": "Z-score"},
+        )
+        ax.set_title(sex.capitalize(), fontsize=14, fontweight="bold", loc="left")
+        ax.set_ylabel("")
+        if sex == panel_sexes[-1]:
+            ax.set_xlabel("classical senescence mRNAs", fontsize=12)
+        else:
+            ax.set_xlabel("")
+        for label in ax.get_xticklabels():
+            label.set_rotation(0)
+            label.set_horizontalalignment("center")
+
+    plt.tight_layout()
+
+    fname = f"{FIGURES_DIR}/classical_senescence_heatmap_male_female.pdf"
+    fig.savefig(fname, dpi=300, bbox_inches="tight")
+    fig.savefig(fname.replace(".pdf", ".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  [OK] {fname}")
 
 
-# ------------------------------------------------------------------
-# 10d. Run module scoring for SHGS, SenMayo, SenNet
-# ------------------------------------------------------------------
-print("\n--- 10d: SHGS module score ---")
-score_and_plot_module(adata, SHGS_GENES, "SHGS_score", "SHGS")
+# ==============================================================================
+# 2. PANEL (g): COMBINED MODULE SCORE HEATMAP
+#    3 rows (SenMayo, SenNet, SHGS) x 2 columns (male, female)
+#    Each cell = celltype2 (rows) x age (columns), mean module score
+# ==============================================================================
 
-print("\n--- 10e: SenMayo module score ---")
-score_and_plot_module(adata, SENMAYO_GENES, "SenMayo_score", "SenMayo")
+print()
+print("=" * 70)
+print("ANALYSIS 2: Combined senescence module score heatmap (panel g)")
+print("=" * 70)
 
-print("\n--- 10f: SenNet module score ---")
-score_and_plot_module(adata, SENNET_GENES, "SenNet_score", "SenNet")
+signature_specs = [
+    ("SenMayo", SENMAYO_GENES, "SenMayo_score"),
+    ("SenNet",  SENNET_GENES,  "SenNet_score"),
+    ("SHGS",    SHGS_GENES,    "SHGS_score"),
+]
+
+signature_dfs = {}
+for label, gene_list, score_col in signature_specs:
+    print(f"\n  Scoring {label}...")
+    dfs = score_module(adata, gene_list, score_col, label)
+    if dfs is not None:
+        signature_dfs[label] = dfs
+
+# Build the combined 3-row x 2-col figure
+panel_sexes = [s for s in SEX_ORDER if s in adata.obs[SEX_COL].unique()]
+n_sigs = len(signature_dfs)
+
+if n_sigs and panel_sexes:
+    fig, axes = plt.subplots(
+        n_sigs, len(panel_sexes),
+        figsize=(6 * len(panel_sexes), 3 * n_sigs),
+        squeeze=False,
+    )
+
+    for row_idx, (label, _, _) in enumerate(
+        [s for s in signature_specs if s[0] in signature_dfs]
+    ):
+        dfs = signature_dfs[label]
+
+        # Independent colorbar range per signature row
+        row_vals = pd.concat(
+            [dfs[s].stack() for s in panel_sexes if s in dfs],
+            ignore_index=True,
+        ).dropna()
+        vmin = float(row_vals.min())
+        vmax = float(row_vals.max())
+
+        for col_idx, sex in enumerate(panel_sexes):
+            ax = axes[row_idx, col_idx]
+            if sex not in dfs or dfs[sex].empty:
+                ax.axis("off")
+                continue
+
+            df_plot = dfs[sex]
+            show_cbar = (col_idx == len(panel_sexes) - 1)
+
+            sns.heatmap(
+                df_plot, ax=ax, annot=True, fmt=".3f",
+                cmap="coolwarm", vmin=vmin, vmax=vmax,
+                linewidths=0.05,
+                cbar=show_cbar,
+                cbar_kws={"label": "mean module score"} if show_cbar else None,
+            )
+
+            # Column titles (male/female) only on the top row
+            if row_idx == 0:
+                ax.set_title(sex, fontsize=13, fontweight="bold")
+            else:
+                ax.set_title("")
+
+            # X-axis label only on bottom row
+            if row_idx == n_sigs - 1:
+                ax.set_xlabel("")
+                for lab in ax.get_xticklabels():
+                    lab.set_rotation(0)
+                    lab.set_horizontalalignment("center")
+            else:
+                ax.set_xlabel("")
+                ax.set_xticklabels([])
+
+            # Y-axis label only on left column; signature label on right col
+            if col_idx == 0:
+                ax.set_ylabel("")
+            else:
+                ax.set_ylabel("")
+                # Put signature label on the right side
+                ax.text(
+                    1.25, 0.5, label,
+                    transform=ax.transAxes,
+                    fontsize=13, fontweight="bold",
+                    ha="left", va="center", rotation=270,
+                )
+
+    plt.tight_layout()
+    fname = f"{FIGURES_DIR}/panel_g_senescence_module_scores_combined.pdf"
+    fig.savefig(fname, dpi=300, bbox_inches="tight")
+    fig.savefig(fname.replace(".pdf", ".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"\n  [OK] {fname}")
 
 
-# ------------------------------------------------------------------
-# 10g. Combined summary heatmap — all three signatures, male vs
-#      female, mean score per celltype2 (collapsed across age)
-# ------------------------------------------------------------------
-print("\n--- 10g: Combined senescence summary heatmap ---")
+# ==============================================================================
+# 3. COMBINED SENESCENCE SUMMARY TABLE
+# ==============================================================================
+
+print()
+print("=" * 70)
+print("ANALYSIS 3: Combined senescence summary table")
+print("=" * 70)
 
 summary_rows = []
 for sig_name, score_col in [
@@ -285,6 +452,8 @@ for sig_name, score_col in [
     if score_col not in adata.obs.columns:
         continue
     for sex in SEX_ORDER:
+        if sex not in adata.obs[SEX_COL].unique():
+            continue
         sub = adata.obs[adata.obs[SEX_COL] == sex]
         means = sub.groupby(CELLTYPE2_COL)[score_col].mean()
         for ct, val in means.items():
@@ -299,10 +468,17 @@ if summary_rows:
     df_summary = pd.DataFrame(summary_rows)
     out = f"{RESULTS_DIR}/senescence_module_scores_summary.csv"
     df_summary.to_csv(out, index=False)
-    print(f"  Saved: {out}")
+    print(f"  [OK] {out}")
 
-print("\n" + "=" * 60)
-print("ANALYSIS 10 COMPLETE — Senescence scoring done")
-print(f"  Figures → {FIGURES_DIR}/")
-print(f"  Tables  → {RESULTS_DIR}/")
-print("=" * 60)
+
+# ==============================================================================
+# SUMMARY
+# ==============================================================================
+
+print()
+print("=" * 70)
+print("ALL SENESCENCE ANALYSES COMPLETE")
+print("=" * 70)
+print(f"  Figures: {FIGURES_DIR}/")
+print(f"  Tables:  {RESULTS_DIR}/")
+print("=" * 70)
