@@ -26,8 +26,7 @@ We generated paired single-nucleus RNA-seq and ATAC-seq (10X Multiome) from **40
 | `adata_wnn.h5ad` | WNN-integrated AnnData (RNA + ATAC) | `data/` |
 | `adata_rna.h5ad` | snRNA-seq processed AnnData | `data/` |
 | ArchR project | ArchR SavedProject directory | `data/archr_project/` |
-| `pseudobulk_counts/` | Pseudobulk count matrices per cell type | `data/` |
-| GWAS summary statistics | Formatted GWAS files | `data/gwas/` |
+
 
 
 ## Contact
