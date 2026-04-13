@@ -1,8 +1,6 @@
-# GWAS-SCAVENGE: Cell-Type-Specific GWAS Trait Enrichment in Mouse Liver
+# GWAS-SCAVENGE: Cell type specific GWAS trait enrichment in Mouse Liver
 
 Integration of human GWAS Catalog variants with single-nucleus multi-ome (RNA + ATAC-seq) data from the aging mouse liver to identify cell-type-specific enrichment of liver-disease-associated genetic variants using the [SCAVENGE](https://github.com/sankaranlab/SCAVENGE) framework.
-
-Reference: Sarker et al. (2026) *Cell Metabolism*.
 
 ## Overview
 
