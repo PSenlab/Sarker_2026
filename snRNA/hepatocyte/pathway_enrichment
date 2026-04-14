@@ -53,7 +53,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE PATHS AS NEEDED
 # ==============================================================================
 
-ADATA_PATH    = "integrated_scvi.h5ad"
+ADATA_PATH    = "rna_wnn.h5ad"
 TARGET_CELLTYPE = "Hepatocyte"
 
 # Base directory produced by pseudobulk_deseq2_dual_model.R
