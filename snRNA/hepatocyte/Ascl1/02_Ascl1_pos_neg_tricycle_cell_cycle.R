@@ -19,7 +19,7 @@
 #           Levene, Watson's two-sample, circular mean/var/rho)
 #
 # Input:
-#   - integrated_scvi.h5ad  (canonical annotated AnnData)
+#   - rna_wnn.h5ad  (canonical annotated AnnData)
 #
 # Output:
 #   Figures:
@@ -65,7 +65,7 @@ suppressPackageStartupMessages({
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
 
-H5AD_PATH <- "integrated_scvi.h5ad"
+H5AD_PATH <- "rna_wnn.h5ad"
 
 AGE_ORDER        <- c("young", "mid_age", "old", "pre_geriatric", "geriatric")
 THETA_AGE_GROUPS <- c("old", "pre_geriatric", "geriatric")
