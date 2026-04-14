@@ -27,7 +27,7 @@ suppressPackageStartupMessages({
 # ==============================================================================
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
-H5AD_PATH <- "integrated_scvi.h5ad"
+H5AD_PATH <- "rna_wnn.h5ad"
 
 SEXES           <- c("male", "female")
 AGES_TO_COMPARE <- c("mid_age", "old", "pre_geriatric", "geriatric")
