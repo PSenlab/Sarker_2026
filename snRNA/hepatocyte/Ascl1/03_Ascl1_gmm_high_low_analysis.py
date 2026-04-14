@@ -19,7 +19,7 @@
 #   6. GSEA dot plots (top 30 positive NES, top 30 negative NES)
 #
 # Input:
-#   - integrated_scvi.h5ad  (annotated AnnData with celltype, celltype2,
+#   - rna_wnn.h5ad  (annotated AnnData with celltype, celltype2,
 #                            sex, age labels)
 #
 # Output:
