@@ -50,7 +50,7 @@ suppressPackageStartupMessages({
 # ==============================================================================
 
 # Input: either an h5ad (will be loaded via schard) or a Seurat .rds
-INPUT_PATH  <- "integrated_scvi.h5ad"
+INPUT_PATH  <- "rna_wnn.h5ad"
 
 # Output object + metadata
 OUTPUT_RDS  <- "seurat_with_entropy_all.rds"
