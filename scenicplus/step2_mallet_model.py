@@ -20,8 +20,6 @@
 #   - Java 8 available on PATH (JAVA_HOME set appropriately)
 #   - Sufficient memory (~500G) for large cisTopic objects
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
