@@ -19,8 +19,6 @@
 #   - {celltype}_Reactome_Pathways_2024_results.csv (full enrichment results)
 #   - {celltype}_dotplot_top5_pathways.pdf
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
