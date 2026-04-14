@@ -33,8 +33,6 @@
 #   - Ridge_Entropy_male.pdf
 #   - Entropy_ANOVA_results.csv
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
@@ -47,8 +45,6 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(stringr)
 })
-
-
 # ==============================================================================
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
