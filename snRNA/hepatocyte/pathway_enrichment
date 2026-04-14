@@ -26,8 +26,6 @@
 #     pathway_overlap_top<N>_<label>.csv         (one per Venn comparison)
 #     pathway_venn_top<N>_<label>.png
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
