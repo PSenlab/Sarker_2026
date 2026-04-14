@@ -61,7 +61,7 @@ suppressPackageStartupMessages({
 # ==============================================================================
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
-INPUT_PATH      <- "integrated_scvi.h5ad"   # .h5ad or .rds accepted
+INPUT_PATH      <- "rna_wnn.h5ad"   # .h5ad or .rds accepted
 TARGET_CELLTYPE <- "Hepatocyte"
 
 BASE_OUT_DIR    <- paste0("deseq2_", tolower(TARGET_CELLTYPE))
