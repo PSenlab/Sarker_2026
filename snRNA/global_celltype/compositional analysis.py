@@ -40,8 +40,6 @@
 #   5. Stacked barplots of cell type proportions by age (percentage)
 #   6. Stacked barplots of cell type counts by age
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
