@@ -62,7 +62,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE THESE PATHS
 # ==============================================================================
 
-INPUT_H5AD = "integrated_scvi.h5ad"
+INPUT_H5AD = "rna_wnn.h5ad"
 OUTPUT_DIR = "age_corr_results"
 COMPARISON_DIR = os.path.join(OUTPUT_DIR, "sex_comparison")
 PATHWAY_DIR = os.path.join(OUTPUT_DIR, "pathway_enrichment")
