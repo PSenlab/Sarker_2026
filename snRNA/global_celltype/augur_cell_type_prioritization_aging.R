@@ -15,9 +15,6 @@
 # Output:
 #   - augur_auc_<sex>_young_vs_<age>.csv  (per-cell-type AUC values)
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
-#
 # ==============================================================================
 
 suppressPackageStartupMessages({
