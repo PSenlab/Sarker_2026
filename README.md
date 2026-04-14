@@ -11,11 +11,11 @@ We generated paired single-nucleus RNA-seq and ATAC-seq (10X Multiome) from **40
 
 ## Key analyses:
 
-- Integrated RNA + ATAC atlas across 10 canonical liver cell types and 7 hepatocyte sub-clusters
+- Integrated RNA + ATAC atlas 
 - Age-associated differential expression and chromatin accessibility (pseudobulk DESeq2 LRT, k-means clustering)
 - Chromatin compartment dynamics (HMM-based stability classification)
 - Peak-to-gene linkage via ArchR CCAN co-accessibility
-- SCENIC+ eGRN inference with hub TF identification (Ascl1, Bcl6, Srebf1, Foxo1, Bhlhe40, Nfkb1)
+- SCENIC+ eGRN inference with hub TF identification 
 - Cell-type-resolved GWAS trait enrichment (SCAVENGE)
 - Transcriptional entropy, cell-cycle (Tricycle), and senescence scoring
 - Human MASLD validation across four cohorts (Duke, German, Japanese, European)
