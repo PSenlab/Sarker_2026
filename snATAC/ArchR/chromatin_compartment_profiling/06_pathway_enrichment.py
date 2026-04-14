@@ -16,15 +16,6 @@
 #     (from compartment_04_p2g_stability_overlap.R)
 #   - Final annotated AnnData (.h5ad) with celltype labels
 #
-# Output:
-#   - Per sex x stability enrichment results (.csv)
-#   - Dot matrix plot (.pdf, .png)
-#
-# Dependencies:
-#   pip install gseapy mygene scanpy
-#
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
