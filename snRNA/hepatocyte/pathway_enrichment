@@ -13,7 +13,7 @@
 #   overlap between the two models.
 #
 # Input:
-#   - integrated_scvi.h5ad  (canonical AnnData, for hepatocyte background)
+#   - rna_wnn.h5ad  (canonical AnnData, for hepatocyte background)
 #   - deseq2_<celltype>/<model>/genes_cluster_<k>.csv
 #         produced by pseudobulk_deseq2_dual_model.R STEP 3
 #
