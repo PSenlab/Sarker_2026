@@ -8,7 +8,7 @@
 # Input:       Integrated AnnData with scVI embedding (from scvi_integration.py)
 # Output:      RNA QC violin plots (n_counts, n_genes)
 #              UMAP grid (age x QC metric: mito, ribo, Hb)
-# #===============================================================================
+#===============================================================================
 
 import logging
 import scanpy as sc
