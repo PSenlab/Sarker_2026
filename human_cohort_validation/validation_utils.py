@@ -19,8 +19,6 @@
 #   - mann_whitney_sex()     : male vs female Mann-Whitney U test
 #   - barplot_male_vs_female(): publication bar + jittered points + bracket
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
