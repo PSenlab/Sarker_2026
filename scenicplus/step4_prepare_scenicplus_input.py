@@ -4,8 +4,6 @@ RNA-ATAC Data Integration Preparation for SCENIC+
 This script prepares matched RNA (GEX) and ATAC (cisTopic) data for SCENIC+ analysis
 by aligning barcodes, filtering to common cells, and ensuring consistent metadata.
 
-Author: Nishat Sarker
-Date: 2025
 """
 
 # =============================================================================
