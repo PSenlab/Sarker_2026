@@ -28,8 +28,6 @@
 # Output:
 #   verify_GTEx_liver_ASCL1_barplot.pdf
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 # ==============================================================================
 
 suppressPackageStartupMessages({
