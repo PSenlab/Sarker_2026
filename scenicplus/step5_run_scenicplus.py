@@ -14,8 +14,6 @@
 #   cd scplus_pipeline/Snakemake
 #   python /path/to/step5_run_scenicplus.py
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
