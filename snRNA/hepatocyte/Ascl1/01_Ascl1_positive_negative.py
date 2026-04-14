@@ -30,8 +30,6 @@
 #   - Figures in figures/
 #   - Tables in results/
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
