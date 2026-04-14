@@ -58,7 +58,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
 
-H5AD_PATH = "integrated_scvi.h5ad"
+H5AD_PATH = "rna_wnn.h5ad"
 
 FIG_DIR = Path("figures")
 RES_DIR = Path("results")
