@@ -39,8 +39,6 @@
 #     sig_gene_overlap.csv
 #     venn_sig_overlap.png
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
