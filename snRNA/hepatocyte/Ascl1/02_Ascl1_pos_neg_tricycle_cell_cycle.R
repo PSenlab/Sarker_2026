@@ -40,8 +40,6 @@
 #   Data:
 #     - sce_tricycle_annotated.rds
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
