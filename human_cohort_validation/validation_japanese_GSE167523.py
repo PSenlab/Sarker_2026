@@ -23,8 +23,6 @@
 # Output:
 #   verify_GSE167523_ASCL1_barplot.{png,pdf}
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 # ==============================================================================
 
 import os
