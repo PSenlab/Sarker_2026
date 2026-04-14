@@ -30,8 +30,6 @@
 #     - Bubble plots per group
 #     - Combined comparison plot
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
