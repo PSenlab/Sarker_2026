@@ -16,14 +16,6 @@
 #   - Per-cluster gene CSVs from Step 12.4:
 #       P2G_C1_genes.csv, P2G_C2_genes.csv, P2G_C3_genes.csv, P2G_C4_genes.csv
 #
-# Output:
-#   - Per-cluster Reactome results CSV
-#     (P2G_Module{N}_Reactome_Pathways_2024_results.csv)
-#   - Combined dot plot across all modules
-#     (p2g_module_pathway_dotplot.pdf/png)
-#
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 #
 # ==============================================================================
 
