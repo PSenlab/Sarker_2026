@@ -4,9 +4,6 @@ pycisTopic LDA Topic Modeling and Downstream Analysis Pipeline
 This script performs topic modeling, clustering, binarization, and differential
 accessibility analysis on a preprocessed cisTopic object.
 
-Author: Nishat Sarker
-Date: 2025
-
 NOTE: Do not run in exclusive mode - this script benefits from parallel processing
 """
 
