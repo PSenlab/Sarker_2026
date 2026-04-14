@@ -14,8 +14,6 @@
 #   bash run_all_celltypes.sh
 #   nohup bash run_all_celltypes.sh > run_all.log 2>&1 &
 #
-# Reference:
-#   Sarker et al. (2026) Cell Metabolism
 # ==============================================================================
 
 set -euo pipefail
