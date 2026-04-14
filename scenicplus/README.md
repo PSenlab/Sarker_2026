@@ -1,8 +1,6 @@
-# SCENIC+ GRN Inference Pipeline (Mouse Liver Hepatocytes)
+# SCENIC+ GRN Inference Pipeline
 
 End-to-end SCENIC+ workflow that infers enhancer-driven gene regulatory networks (eGRNs) from the single-nucleus multi-ome liver aging dataset. The pipeline runs from raw fragments through pycisTopic topic modeling to SCENIC+ eRegulon inference and downstream trajectory analysis.
-
-Reference: Sarker et al. (2026) *Cell Metabolism*.
 
 ## Pipeline overview
 
@@ -104,16 +102,6 @@ All scripts assume the canonical multi-ome object for this paper:
 Additionally, step 1 expects per-sample fragment files (`fragments.tsv.gz`) and a cell annotation TSV mapping barcodes to broad cell types.
 
 ## Compute requirements
-
-| Step | Memory | CPUs | Time |
-|---|---|---|---|
-| Step 1 | ~60 GB | 20 | ~4 h |
-| Step 2 (MALLET) | ~500 GB | 30+ | ~8-12 h |
-| Step 3 | ~60 GB | 20 | ~2 h |
-| Step 4 | ~30 GB | 4 | ~30 min |
-| Step 5 (SCENIC+) | ~1.5 TB | 50+ | ~24-48 h |
-| Step 6 | ~60 GB | 8 | ~1 h |
-
 MALLET and the SCENIC+ inference step are the expensive ones. MALLET is memory-bound (step 2), SCENIC+ is both memory- and compute-bound (step 5). All other steps are feasible on a standard node.
 
 ## Output structure
