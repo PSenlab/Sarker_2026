@@ -149,23 +149,13 @@ SENMAYO_GENES = [
 ]
 
 # SenNet: Core senescence biomarkers (NIH SenNet consortium 2024)
-SENNET_GENES = [
-    # Cell Cycle Arrest
-    "Cdkn2a", "Cdkn1a", "Trp53", "Rb1",
-    # DNA Damage Response
-    "H2afx", "Trp53bp1", "Atm", "Atr",
-    # Nuclear Changes
-    "Lmnb1",
-    # Anti-Apoptotic (pro-survival)
-    "Bcl2", "Bcl2l1", "Bcl2l2", "Serpinb2",
-    # SASP Core
-    "Il1a", "Il1b", "Il6", "Cxcl1", "Ccl2", "Mmp3", "Mmp9",
-    # Surface Markers
-    "Dpp4", "Cd36", "Icam1", "Plaur", "Tnfrsf10d",
-    # Lysosomal
-    "Glb1",
+# SASP-focused senescence set (human-derived), mapped to mouse orthologs
+SENNET_SASP_GENES = [
+    "Ccl2", "Ccl5", "Cdkn1a", "Cdkn2a", "Cxcl1", "Cxcl2", "Cxcl5",
+    "Ifna1", "Il1a", "Il6", "Irf7", "H2afy",   # H2afy = MACROH2A1 (see note)
+    "Mmp1a",                                     # MMP1 has no 1:1 mouse ortholog (see note)
+    "Mmp2", "Mmp3", "Pdgfb", "Serpine1", "Tgfb1", "Tnf",
 ]
-
 
 # ==============================================================================
 # HELPER FUNCTIONS
