@@ -70,15 +70,15 @@ ANNOTATION = {
     "0":  "CD4T",
     "1":  "CD8T",
     "2":  "CD8T",
-    "3":  "iNKT",         # confirmed iNKT (Zbtb16+ Klrb1c+), not MAIT
+    "3":  "iNKT",         
     "4":  "Treg",
-    "5":  "neutrophil",   # Cd3+ Csf3r+ granulocyte signal; retained, not merged
+    "5":  "neutrophil",   
     "6":  "NK",
     "7":  "ILC1",
     "8":  "CD8T",
     "9":  "CD8T",
     "10": "gdT",
-    "11": "Low-quality",  # all-marker-zero; removed before saving
+    "11": "Low-quality",  
 }
 
 # Marker panel used to validate the annotation (mouse symbols).
@@ -96,9 +96,6 @@ MARKERS = {
 
 # Left-to-right group order for the dot plot / final categories.
 GROUP_ORDER = ["CD4T", "CD8T", "Treg", "iNKT", "gdT", "NK", "ILC1", "neutrophil"]
-
-# Labels removed after annotation (kept out of the saved object).
-DROP_LABELS = ["Low-quality"]
 
 CELLTYPE_OUT = "celltype_T"      # obs column the annotation is written to
 
