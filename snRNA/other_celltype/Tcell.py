@@ -2,26 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 Compartment subclustering — liver aging multiome (RNA modality).
-
-Generic scVI subclustering for any major compartment of the annotated atlas.
-Subsets a compartment (one or more coarse labels), re-integrates it with scVI on
-subset-specific highly variable genes (HVGs), and runs a Leiden resolution sweep
-with a matched UMAP computed on the scVI latent.
-
-The pipeline is compartment-agnostic. Everything compartment-specific — the
-coarse label(s) to subset, the marker panel, the cluster->celltype map, the
-group order, and the output obs column — lives in the PANELS registry below and
-is selected with ``--compartment``. Adding a new compartment = adding one entry
-to PANELS; the pipeline body never changes.
-
-Why re-integrate the subset rather than reuse the global embedding
-------------------------------------------------------------------
-The subset inherits a neighbors graph and HVG set shaped by the global,
-hepatocyte-dominated atlas. We therefore (a) clear the stale graph and
-(b) re-derive HVGs + scVI on the subset alone, so that clustering and the UMAP
-reflect within-compartment variation rather than global structure. Clustering
-and UMAP are both computed on the same scVI latent and are therefore matched.
-
 Expected input AnnData
 ----------------------
     .layers['counts']   raw counts
@@ -37,12 +17,12 @@ this analysis was validated against are pinned in ``requirements.txt``.
 
 Usage
 -----
-    # T / NK compartment
-    python subcluster_scvi.py --compartment lymph_T \
+    # T / ILC compartment (note: key has a space + slash, so quote it)
+    python subcluster_scvi.py --compartment "T/ILC cells" \
         --input  data/final_rna_wnn.h5ad \
         --output results/lymp_T_scvi_subclustered.h5ad
 
-    # Myeloid compartment (Kupffer + MoMFs)
+    # Myeloid compartment
     python subcluster_scvi.py --compartment myeloid \
         --input  data/final_rna_wnn.h5ad \
         --output results/myeloid_scvi_subclustered.h5ad
@@ -69,92 +49,30 @@ import pymde                     # noqa: E402
 # --------------------------------------------------------------------------- #
 # Compartment registry (dataset-specific)
 #
-# One entry per compartment. Each holds everything the generic pipeline needs to
-# subset, annotate, and validate that lineage:
+# One entry per compartment, keyed by --compartment. Each holds only the coarse
+# label(s) that define the compartment:
 #
 #   subset_labels : coarse label(s) in obs[celltype_key] defining the compartment
-#   annotation    : cluster (str) -> fine celltype, for the resolution in
-#                   annotate_key. NOTE: re-integrating a subset yields NEW cluster
-#                   numbers each time — run once, inspect the clusters at
-#                   annotate_key, then edit these. Unmapped clusters fail loudly.
-#   annotate_key  : leiden key whose clusters `annotation` maps from
-#   group_order   : left-to-right final category order (== legend order)
-#   drop_labels   : fine labels removed after annotation (junk / low-quality)
-#   celltype_out  : obs column the fine annotation is written to
+#
+# Annotation is intentionally not part of this script — it does the scVI
+# subset + Leiden resolution sweep + UMAP only. Annotate downstream once you've
+# inspected the sweep.
 # --------------------------------------------------------------------------- #
 PANELS = {
-    "lymph_T": {
+    "T/ILC cells": {
         "subset_labels": ["T/ILC cells"],
-        "annotate_key": "leiden_scvi_8",
-        "annotation": {
-            "0":  "CD4T",
-            "1":  "CD8T",
-            "2":  "CD8T",
-            "3":  "iNKT",
-            "4":  "Treg",
-            "5":  "neutrophil",
-            "6":  "NK",
-            "7":  "ILC1",
-            "8":  "CD8T",
-            "9":  "CD8T",
-            "10": "gdT",
-            "11": "Low-quality",
-        },
-        "group_order": ["CD4T", "CD8T", "Treg", "iNKT", "gdT", "NK", "ILC1", "neutrophil"],
-        "drop_labels": ["Low-quality"],
-        "celltype_out": "T/ILC cells",
     },
 
     "myeloid": {
         "subset_labels": ["Kupffer 01", "non-resident myeloid"],
-        "annotate_key": "leiden_scvi_8",
-        "annotation": {
-            # PLACEHOLDER seeded from the earlier leiden_scvi_3 calls — will NOT
-            # match this fresh re-integration. Inspect the clusters, then edit.
-            "0":  "Kupffer",
-            "1":  "Kupffer",
-            "2":  "LAM",
-            "3":  "Kupffer_cycling",
-            "4":  "neutrophil",
-            "5":  "cDC1",
-            "6":  "pDC",
-            "7":  "MoMF",
-            "8":  "MoMF",
-        },
-        "group_order": ["Kupffer", "Kupffer_cycling", "LAM", "MoMF", "cDC1", "pDC", "neutrophil"],
-        "drop_labels": [],
-        "celltype_out": "myeloid",
     },
 
-    "endo": {
+    "endothelial_Kupffer02": {
         "subset_labels": ["endothelial", "Kupffer 02"],
-        "annotate_key": "leiden_scvi_8",
-        "annotation": {
-            # PLACEHOLDER — inspect the clusters at annotate_key, then edit.
-            "0":  "LSEC",
-            "1":  "LSEC",
-            "2":  "MV portal",
-            "3":  "MV central",
-            "4":  "LSEC cycling",
-            "5":  "Kupffer-like",
-        },
-        "group_order": ["LSEC", "LSEC cycling", "MV portal", "MV central", "Kupffer-like"],
-        "drop_labels": [],
-        "celltype_out": "endothelial_Kupffer02",
     },
 
-    # Kupffer 01 + Kupffer 02 combined (resident Kupffer + the reassigned
-    # Endothelial-02 / Kupffer-like population). Re-integrating them together with
-    # scVI checks whether the two co-cluster; if they do, the combined identity is
-    # simply "Kupffer". Run WITHOUT --annotate (annotation left empty on purpose);
-    # inspect the Leiden sweep, then fill in later.
-    "kupffer": {
+    "Kupffer": {
         "subset_labels": ["Kupffer 01", "Kupffer 02"],
-        "annotate_key": "leiden_scvi_8",
-        "annotation": {},        # fill after inspecting the sweep, if annotating
-        "group_order": [],
-        "drop_labels": [],
-        "celltype_out": "Kupffer",
     },
 }
 
@@ -199,12 +117,6 @@ def parse_args(argv=None):
     p.add_argument("--seed", type=int, default=0,
                    help="Global random seed.")
 
-    # annotation
-    p.add_argument("--annotate", action="store_true",
-                   help="Apply the manual annotation map after the sweep.")
-    p.add_argument("--annotate-key", default=None,
-                   help="Override the compartment's annotate_key.")
-
     p.add_argument("--print-versions", action="store_true",
                    help="Log key package versions and exit environment info.")
     return p.parse_args(argv)
@@ -234,57 +146,12 @@ def log_versions():
 def leiden_key(res):
     """Key name for a Leiden resolution, e.g. 0.8 -> 'leiden_scvi_8'.
 
-    Matches the naming used throughout the analysis and the annotation maps.
     Unique for the 0.1-step sweep used here (resolutions 0.1-1.0 map to keys
     1-10); if you sweep finer than 0.1 steps, switch to f-string
-    'leiden_scvi_{res:g}' and update the panel annotate_key accordingly.
+    'leiden_scvi_{res:g}'.
     """
     return f"leiden_scvi_{int(round(res * 10))}"
 
-
-def annotate_and_validate(adata, panel, annotate_key):
-    """Map clusters -> cell types and drop junk labels.
-
-    All compartment-specific info comes from `panel` (an entry of PANELS), so the
-    function itself is generic.
-
-    Returns a (possibly smaller) AnnData with:
-        .obs[panel['celltype_out']]  categorical annotation, drop_labels removed
-    """
-    annotation   = panel["annotation"]
-    group_order  = panel["group_order"]
-    drop_labels  = panel["drop_labels"]
-    celltype_out = panel["celltype_out"]
-
-    if annotate_key not in adata.obs:
-        raise KeyError(
-            f"{annotate_key!r} not in obs. Available leiden keys: "
-            f"{[c for c in adata.obs if c.startswith('leiden')]}"
-        )
-
-    # unmapped clusters would become NaN and silently vanish -> fail loudly
-    clusters = set(adata.obs[annotate_key].astype(str).unique())
-    unmapped = clusters - set(annotation)
-    if unmapped:
-        raise ValueError(
-            f"Clusters in {annotate_key} with no annotation entry: "
-            f"{sorted(unmapped)}"
-        )
-
-    adata.obs[celltype_out] = (
-        adata.obs[annotate_key].astype(str).map(annotation).astype("category")
-    )
-    print(f"\n{celltype_out} (from {annotate_key}):")
-    print(adata.obs[celltype_out].value_counts())
-
-    # --- drop junk labels, tidy categories ---
-    n_before = adata.n_obs
-    adata = adata[~adata.obs[celltype_out].isin(drop_labels)].copy()
-    adata.obs[celltype_out] = adata.obs[celltype_out].cat.remove_unused_categories()
-    order = [g for g in group_order if g in adata.obs[celltype_out].cat.categories]
-    adata.obs[celltype_out] = adata.obs[celltype_out].cat.reorder_categories(order)
-    print(f"dropped {drop_labels}: {n_before} -> {adata.n_obs} cells")
-    return adata
 
 
 # --------------------------------------------------------------------------- #
@@ -295,7 +162,6 @@ def main(argv=None):
 
     panel = PANELS[args.compartment]
     subset_labels = args.celltype_val or panel["subset_labels"]
-    annotate_key  = args.annotate_key or panel["annotate_key"]
 
     sc.settings.verbosity = 1
     scvi.settings.seed = args.seed
@@ -363,13 +229,7 @@ def main(argv=None):
         print(f"{key}: {adata.obs[key].nunique()} clusters")
     sc.tl.umap(adata, random_state=args.seed)   # UMAP on the same scVI neighbors graph
 
-    # --- 7. manual annotation (optional) ---
-    if args.annotate:
-        adata = annotate_and_validate(
-            adata, panel=panel, annotate_key=annotate_key,
-        )
-
-    # --- 8. save ---
+    # --- 7. save ---
     adata.write_h5ad(args.output)
     print(f"saved -> {args.output}")
 
