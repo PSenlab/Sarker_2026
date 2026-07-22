@@ -2,8 +2,7 @@
 """
 pycisTopic Preprocessing Pipeline for SCENIC+ — ALL COMPARTMENTS
 =================================================================
-One script covering the four compartment runs of the liver aging multiome
-atlas: Hepatocyte, endothelial_Kupffer02, myeloid, and T_ILC.
+liver aging multiome atlas: Hepatocyte, endothelial_Kupffer02, myeloid, and T_ILC.
 
 IMPORTANT — why each compartment is a FULL independent run
 ----------------------------------------------------------
