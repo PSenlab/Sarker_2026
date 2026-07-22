@@ -18,7 +18,7 @@
 #   stored in obs / the CSVs (e.g. "Kupffer cycling", "LSEC-like", "MV portal").
 #   Joins + ArchR grouping use them verbatim; DE FILENAMES are sanitized
 #   (space/hyphen -> underscore) to match python's safe_name(), via sanitize().
-#   Set `labels` to whatever your DE files + expr_stats 'celltype' column use.
+#   `prefix` must match the --prefix passed to compartment_downstream.py.
 #
 # Usage: edit COMPARTMENTS + the RUN switches, then
 #        `Rscript compartment_marker_bubbles.R`
@@ -32,7 +32,7 @@
 DO_RNA  <- TRUE
 DO_ATAC <- TRUE
 ARCHR_PROJECT <- "/data/sarkern2/multiome_liver/Seurat/archR/ArchR_Projects/Step6_Xwnn_UMAP"
-RUN <- NULL   # NULL = all; or e.g. c("Kupffer","endo") to run a subset
+RUN <- NULL   # NULL = all; or e.g. c("Kupffer","endothelial_Kupffer02")
 ## ===========================================================
 
 ## ===================== PER-COMPARTMENT CONFIG =====================
@@ -67,9 +67,9 @@ COMPARTMENTS <- list(
     fig_w = 11, fig_h = 4
   ),
 
-  endo = list(
+  endothelial_Kupffer02 = list(
     out_dir   = "/data/sarkern2/multiome_liver/endo_DE_csvs",
-    prefix    = "endo",
+    prefix    = "endothelial_Kupffer02",
     label_col = "endo_subcluster",
     labels    = c("LSEC", "LSEC cycling", "MV portal", "MV central", "Kupffer-like"),
     genes     = c("Stab2","Clec4g","Gata4","Oit3","Dnase1l3","Mrc1",
@@ -82,7 +82,7 @@ COMPARTMENTS <- list(
 
   T_ILC = list(
     out_dir   = "/data/sarkern2/multiome_liver/T_DE_csvs",
-    prefix    = "T",
+    prefix    = "T_ILC",
     label_col = "celltype_T",
     labels    = c("CD4T", "Treg", "CD8T", "gdT", "iNKT", "NK", "ILC1", "neutrophil"),
     genes     = c("Cd3e","Cd4","Foxp3","Ikzf2",
