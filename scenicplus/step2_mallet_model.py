@@ -41,7 +41,7 @@ RESULT_PATH  = os.path.join(OUT_DIR, "mal_result")
 MALLET_BIN   = "path/to/Mallet-202108/bin/mallet"
 
 # Topic counts to fit (one model per value)
-N_TOPICS     = [300, 350, 400]
+N_TOPICS     = [25, 50, 75, 100, 300, 350, 400]
 N_CPU        = 20
 N_ITER       = 500
 RANDOM_STATE = 555
