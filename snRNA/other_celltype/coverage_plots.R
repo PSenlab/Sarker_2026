@@ -4,10 +4,13 @@ addArchRThreads(16); addArchRGenome("mm10")
 proj <- loadArchRProject(
     "/data/sarkern2/multiome_liver/Seurat/archR/ArchR_Projects/Step6_Xwnn_UMAP")
 
+RUN <- NULL   # NULL = all; or e.g. c("endothelial_Kupffer02") to run a subset
+
 # =========================================================================
 # per-compartment config: CSV, label column, marker panel, output name
 # =========================================================================
 COMPARTMENTS <- list(
+
   myeloid = list(
     csv       = "celltype_myeloid.csv",
     col       = "celltype_myeloid",
@@ -25,6 +28,7 @@ COMPARTMENTS <- list(
       Endothelial      = c("Ptprb")         # cross-lineage negative control
     )
   ),
+
   Kupffer = list(
     csv       = "Kupffer_sub_labels.csv",
     col       = "celltype_sub",
@@ -36,6 +40,40 @@ COMPARTMENTS <- list(
       LAM              = c("Gpnmb", "Trem2", "Cd9"),
       `LSEC-like`      = c("Stab2", "Clec4g", "Kdr", "Gata4"),  # endothelial-like / KC2
       Hepatocyte       = c("Alb")           # cross-lineage negative control
+    )
+  ),
+
+  endothelial_Kupffer02 = list(
+    csv       = "endothelial_Kupffer02_sub_labels.csv",
+    col       = "endo_subcluster",
+    outdir    = "/data/sarkern2/multiome_liver/scanpy_subcluster/subcluster/Endo/coverage_plots/Plots",
+    pdf       = "BrowserTrack_endothelial_Kupffer02_subclusters_labeled.pdf",
+    panel     = list(
+      LSEC             = c("Stab2", "Clec4g", "Gata4", "Oit3"),
+      `LSEC cycling`   = c("Mki67", "Top2a"),
+      `MV portal`      = c("Vwf", "Sox17", "Efnb2"),
+      `MV central`     = c("Rspo3", "Wnt9b", "Thbd"),
+      `Kupffer-like`   = c("Clec4f", "Vsig4", "Cd5l", "C1qa"),  # KC2
+      Hepatocyte       = c("Alb")           # cross-lineage negative control
+    )
+  ),
+
+  T_ILC = list(
+    csv       = "T_ILC_sub_labels.csv",
+    col       = "celltype_T",
+    outdir    = "/data/sarkern2/multiome_liver/scanpy_subcluster/subcluster/Tcells/coverage_plots/Plots",
+    pdf       = "BrowserTrack_T_ILC_subclusters_labeled.pdf",
+    panel     = list(
+      CD4T             = c("Cd4"),
+      Treg             = c("Foxp3", "Ikzf2"),
+      CD8T             = c("Cd8a", "Cd8b1"),
+      gdT              = c("Trdc"),
+      iNKT             = c("Zbtb16"),
+      NK               = c("Ncr1", "Gzmb"),
+      ILC1             = c("Tbx21", "Eomes"),
+      neutrophil       = c("S100a8", "S100a9", "Retnlg"),
+      Hepatocyte       = c("Alb"),          # cross-lineage negative control
+      Kupffer          = c("Clec4f")        # cross-lineage negative control
     )
   )
 )
@@ -101,9 +139,10 @@ run_browser_tracks <- function(proj, cfg, name) {
 }
 
 # =========================================================================
-# run both compartments
+# run all compartments
 # =========================================================================
-for (name in names(COMPARTMENTS)) {
+to_run <- if (is.null(RUN)) names(COMPARTMENTS) else RUN
+for (name in to_run) {
   run_browser_tracks(proj, COMPARTMENTS[[name]], name)
 }
 cat("\ndone.\n")
