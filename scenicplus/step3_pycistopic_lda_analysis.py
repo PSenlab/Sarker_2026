@@ -1,34 +1,52 @@
 #!/usr/bin/env python3
 """
-SCENIC+ Step 4: RNA-ATAC Integration Prep — ALL COMPARTMENTS
-=============================================================
-Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment: reconstructs
-barcodes, intersects cells, orders both objects identically, and writes the
-SCENIC+ input bundle.
+SCENIC+ Step 3: LDA model selection, topic analysis, DARs, and SCENIC+ input prep
+=================================================================================
+One script for all compartments. Consumes Step 1 (annotated cisTopic objects) and
+Step 2 (MALLET models), and produces everything SCENIC+ needs.
 
-Consumes
---------
-  <out_dir>/cisTopicObject_lda_complete.pkl     (Step 3)
-  <out_dir>/region_sets/                        (Step 3)
-  <rna_h5ad>                                    (compartment RNA object)
+TWO PHASES -- topic count cannot be automated
+---------------------------------------------
+The number of topics has to be chosen by eye from the model-quality curves
+(Arun / Cao-Juan crossover, Mimno coherence, log-likelihood), and it differs per
+compartment. So:
 
-Produces
---------
-  <out_dir>/scenicplus_input/<suffix>_GEX_anndata.h5ad
-  <out_dir>/scenicplus_input/<suffix>_cisTopic_obj.pkl
-  <out_dir>/scenicplus_input/region_sets/
+  PHASE 1   python step3_lda_all.py --evaluate
+            -> writes <out_dir>/plots/model_evaluation.pdf for each compartment
+               and prints the available topic counts. Nothing else runs.
 
-NOTE: this duplicates step 9 of step3_lda_all.py. Keep ONE as canonical -- the
-recommended split is to run Step 3 with `--skip 9` and use this script, so the
-integration can be redone (different RNA object, different filter) without
-repeating LDA.
+  (you look at each plot, then set n_topics in the COMPARTMENTS registry below)
+
+  PHASE 2   python step3_lda_all.py --run
+            -> select model, cluster/UMAP/t-SNE, binarize topics, topic QC +
+               annotation, imputation, DARs (age / celltype / sex), region-set
+               BEDs, and the final cisTopic object.
+
+Outputs per compartment
+-----------------------
+  <out_dir>/plots/...                        evaluation, UMAPs, topic QC
+  <out_dir>/topic_qc_metrics.csv
+  <out_dir>/topic_annotation_by_<var>.csv
+  <out_dir>/region_sets/Topics_otsu/*.bed
+  <out_dir>/region_sets/Topics_top_3k/*.bed
+  <out_dir>/region_sets/DARs_{age,celltype,sex}/*.bed
+  <out_dir>/cisTopicObject_lda_complete.pkl
+
+NEXT STEP
+---------
+RNA-ATAC integration and the SCENIC+ input bundle are NOT done here -- they are
+Step 4 (step4_rna_atac_prep_all.py), which consumes
+<out_dir>/cisTopicObject_lda_complete.pkl and <out_dir>/region_sets/. Keeping it
+separate means the integration can be redone (different RNA object, different
+filter, barcode fixes) without repeating LDA selection and DAR calling.
 
 Usage
 -----
-  python step4_rna_atac_prep_all.py                  # all compartments
-  python step4_rna_atac_prep_all.py --run T_ILC
-  python step4_rna_atac_prep_all.py --run myeloid --rna other.h5ad
-  python step4_rna_atac_prep_all.py --dry-run        # report overlap, write nothing
+  python step3_lda_all.py --evaluate
+  python step3_lda_all.py --evaluate --run T_ILC
+  python step3_lda_all.py --run                      # all compartments
+  python step3_lda_all.py --run myeloid --topics 50  # one-off topic override
+  python step3_lda_all.py --run T_ILC --skip 7       # skip a step
 
 Author: Nishat Sarker
 License: MIT
@@ -37,39 +55,50 @@ License: MIT
 import argparse
 import os
 import pickle
-import re
-import shutil
 import traceback
 import warnings
-from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import anndata as ad
-import scanpy as sc
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
 
 
 # =============================================================================
-# SHARED CONFIGURATION
+# SHARED PARAMETERS
 # =============================================================================
 
-DESIRED_AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
-TARGET_SUM = 1e4
+N_TOP_REGIONS = 3000                  # binarization: top-N regions per topic
+CLUSTER_K = 10                        # k for the topic-space kNN graph
+CLUSTER_RESOLUTIONS = [0.6, 1.2, 3]
 
-# RNA obs_names spell some sample groups differently from the cisTopic cell
-# names (RNA 'pre_geriatric_3' vs cisTopic 'pre_ger_03', because Step 1
-# abbreviated it when building sample ids). Applied in transform_barcode_index().
-# If one age group shows zero shared cells, the fix belongs here.
-SAMPLE_RENAME = {"pre_geriatric": "pre_ger"}
+# find_diff_features parallelism. n_cpu=1 is deliberate: higher values leak Ray
+# workers and hang on large imputed matrices. ray.shutdown() is called before
+# every invocation for the same reason.
+DIFF_N_CPU = 1
+
+MIN_DISP = 0.05
+MIN_MEAN = 0.0125
+MAX_MEAN = 3
+ADJPVAL_THR = 0.05
+LOG2FC_THR = np.log2(1.5)
+
+# Variables to compute DARs / topic annotations for, if present in cell_data
+DIFF_VARIABLES = ["age", "celltype", "sex"]
 
 
 # =============================================================================
-# PER-COMPARTMENT REGISTRY  (out_dir / suffix must match Steps 1-3)
-#   celltype_col     : annotation column ('cell_type' for the full-atlas run)
-#   cell_type_filter : None = no pre-filter; the RNA<->ATAC intersection already
-#                      defines the compartment when rna_h5ad is the subset object
+# PER-COMPARTMENT REGISTRY
+#   out_dir / suffix : must match Step 1 and Step 2
+#   celltype_col     : annotation column name in the object ('cell_type' for the
+#                      full-atlas run); normalized to 'celltype' internally
+#   n_topics         : CHOSEN topic count. None until you have looked at the
+#                      evaluation plot from PHASE 1.
+# (rna_h5ad lives in Step 4's registry, not here)
 # =============================================================================
 
 COMPARTMENTS = {
@@ -77,41 +106,36 @@ COMPARTMENTS = {
     "all_celltypes": dict(
         out_dir="outs_all_celltypes",
         suffix="all_celltypes",
-        rna_h5ad="liver_atlas.h5ad",
         celltype_col="cell_type",
-        cell_type_filter=None,
+        n_topics=None,                       # <-- set after PHASE 1
     ),
 
     "Hepatocyte": dict(
         out_dir="outs_Heps",
         suffix="Heps",
-        rna_h5ad="Hepatocyte.h5ad",
         celltype_col="celltype",
-        cell_type_filter=None,
+        n_topics=None,
     ),
 
     "endothelial_Kupffer02": dict(
         out_dir="outs_endothelial_Kupffer02",
         suffix="endothelial_Kupffer02",
-        rna_h5ad="endothelial_Kupffer02.h5ad",
         celltype_col="celltype",
-        cell_type_filter=None,
+        n_topics=None,
     ),
 
     "myeloid": dict(
         out_dir="outs_myeloid",
         suffix="myeloid",
-        rna_h5ad="myeloid.h5ad",
         celltype_col="celltype",
-        cell_type_filter=None,
+        n_topics=None,
     ),
 
     "T_ILC": dict(
         out_dir="outs_T_ILC",
         suffix="T_ILC",
-        rna_h5ad="T_ILC.h5ad",
         celltype_col="celltype",
-        cell_type_filter=None,
+        n_topics=None,                       # notebook landed on 50 for T cells
     ),
 }
 
@@ -121,38 +145,113 @@ COMPARTMENTS = {
 # =============================================================================
 
 class Cfg:
-    def __init__(self, name, spec, rna_override=None):
+    def __init__(self, name, spec):
         self.name = name
         self.outDir = spec["out_dir"]
         self.suffix = spec["suffix"]
-        self.rna_h5ad = rna_override or spec["rna_h5ad"]
         self.celltype_col = spec.get("celltype_col", "celltype")
-        self.cell_type_filter = spec.get("cell_type_filter")
+        self.n_topics = spec.get("n_topics")
 
-        self.cistopic_pkl = os.path.join(self.outDir, "cisTopicObject_lda_complete.pkl")
+        self.models_dir = os.path.join(self.outDir, "mal_result")
+        self.plots_dir = os.path.join(self.outDir, "plots")
         self.region_sets_dir = os.path.join(self.outDir, "region_sets")
-        self.scenicplus_dir = os.path.join(self.outDir, "scenicplus_input")
-        self.gex_out = os.path.join(self.scenicplus_dir,
-                                    f"{self.suffix}_GEX_anndata.h5ad")
-        self.ctx_out = os.path.join(self.scenicplus_dir,
-                                    f"{self.suffix}_cisTopic_obj.pkl")
+
+        self.annotated_pkl = os.path.join(
+            self.outDir, f"cisTopicObject_filtered_annotated_{self.suffix}.pkl")
+        self.lda_added_pkl = os.path.join(self.outDir, "cisTopicObject_lda_added.pkl")
+        self.complete_pkl = os.path.join(self.outDir, "cisTopicObject_lda_complete.pkl")
+
+    def makedirs(self):
+        os.makedirs(self.plots_dir, exist_ok=True)
+        for sub in ["Topics_otsu", "Topics_top_3k"] + \
+                   [f"DARs_{v}" for v in DIFF_VARIABLES]:
+            os.makedirs(os.path.join(self.region_sets_dir, sub), exist_ok=True)
 
 
 # =============================================================================
 # HELPERS
 # =============================================================================
 
-def transform_barcode_index(index: str) -> str:
+def load_pickle(path, what="object"):
+    print(f" Loading {what} from {path}...")
+    with open(path, "rb") as f:
+        obj = pickle.load(f)
+    return obj
+
+
+def save_pickle(obj, path, what="object"):
+    print(f"[SAVE] Saving {what} to {path}...")
+    with open(path, "wb") as f:
+        pickle.dump(obj, f)
+    print("[OK] Saved.")
+
+
+def model_topic_count(model):
+    """Topic-count attribute name differs across pycisTopic versions."""
+    for attr in ("n_topic", "topic_no", "n_topics"):
+        if hasattr(model, attr):
+            return int(getattr(model, attr))
+    raise AttributeError("cannot determine topic count from model")
+
+
+def load_lda_models(models_dir):
+    """Load models, DEDUPLICATED BY TOPIC COUNT.
+
+    Step 2's MALLET call saves each model itself; older runs additionally
+    re-pickled them under a second name, so a directory can hold two files per
+    topic count. Passing both to evaluate_models double-counts the model and
+    distorts the metric curves, so collapse by topic count here.
+    """
+    if not os.path.isdir(models_dir):
+        raise FileNotFoundError(f"Models directory not found: {models_dir}")
+
+    files = [f for f in os.listdir(models_dir) if f.endswith(".pkl")]
+    if not files:
+        raise FileNotFoundError(f"No .pkl model files in {models_dir}")
+
+    uniq = {}
+    for fn in sorted(files):
+        with open(os.path.join(models_dir, fn), "rb") as fh:
+            m = pickle.load(fh)
+        uniq[model_topic_count(m)] = m
+
+    models = [uniq[k] for k in sorted(uniq)]
+    print(f"[STATS] {len(files)} model files -> {len(models)} unique topic counts: "
+          f"{[model_topic_count(m) for m in models]}")
+    if len(files) > len(models):
+        print("  [INFO] duplicate model files collapsed by topic count")
+    return models
+
+
+def normalize_celltype_col(cistopic_obj, celltype_col, context=""):
+    """Rename the annotation column to 'celltype' so downstream code is uniform."""
+    cd = cistopic_obj.cell_data
+    if celltype_col in cd.columns:
+        if celltype_col != "celltype":
+            cistopic_obj.cell_data = cd.rename(columns={celltype_col: "celltype"})
+            print(f"[OK] {context}renamed '{celltype_col}' -> 'celltype'")
+        return cistopic_obj
+    for alias in ("celltype", "cell_type", "celltype2"):
+        if alias in cd.columns:
+            if alias != "celltype":
+                cistopic_obj.cell_data = cd.rename(columns={alias: "celltype"})
+            print(f"[WARN] {context}celltype_col='{celltype_col}' not found; "
+                  f"using '{alias}'")
+            return cistopic_obj
+    print(f"[WARN] {context}no celltype column found. "
+          f"Available: {cd.columns.tolist()}")
+    return cistopic_obj
+
+
+def transform_barcode_index(index):
     """RNA obs_name -> cisTopic cell name.
 
-    Handles BOTH 'ACGT-geriatric_3' and 'ACGT-1-geriatric_3'. The previous
-    rsplit('-', 1) implementation turned the second form into
-    'ACGT-1-1-geriatric_03___geriatric_03', which matches nothing -- the failure
-    is silent because it just lowers the shared-cell count.
+    Handles both 'ACGT-geriatric_3' and 'ACGT-1-geriatric_3' (the naive
+    rsplit('-', 1) used previously turned the latter into 'ACGT-1-1-...' which
+    matched nothing). Applies SAMPLE_RENAME and zero-pads the replicate number:
 
-        ACGT-geriatric_3        -> ACGT-1-geriatric_03___geriatric_03
-        ACGT-1-geriatric_3      -> ACGT-1-geriatric_03___geriatric_03
-        ACGT-pre_geriatric_3    -> ACGT-1-pre_ger_03___pre_ger_03
+        ACGT-geriatric_3      -> ACGT-1-geriatric_03___geriatric_03
+        ACGT-1-pre_geriatric_3-> ACGT-1-pre_ger_03___pre_ger_03
     """
     s = str(index).split("___")[0]
     parts = s.split("-")
@@ -167,267 +266,387 @@ def transform_barcode_index(index: str) -> str:
     return f"{dna}-1-{sample}___{sample}"
 
 
-def model_topic_count(model):
-    for attr in ("n_topic", "topic_no", "n_topics"):
-        if hasattr(model, attr):
-            return int(getattr(model, attr))
-    return None
+def dump_region_sets(region_dict, out_folder):
+    """Write each region set to a BED file."""
+    from pycisTopic.utils import region_names_to_coordinates
+    os.makedirs(out_folder, exist_ok=True)
+    n = 0
+    for name, regions in region_dict.items():
+        idx = regions.index if hasattr(regions, "index") else regions
+        if len(idx) == 0:
+            continue
+        region_names_to_coordinates(idx).sort_values(
+            ["Chromosome", "Start", "End"]).to_csv(
+            os.path.join(out_folder, f"{name}.bed"),
+            sep="\t", header=False, index=False)
+        n += 1
+    print(f"   [OK] wrote {n} BED files to {out_folder}")
 
 
-def load_rna_anndata(filepath: str, celltype_col: str = "celltype",
-                     cell_type: Optional[str] = None) -> ad.AnnData:
-    """Load RNA object, preferring RAW COUNTS from layers['counts'].
-
-    In the subclustered objects .X is ALREADY log-normalized (raw counts live in
-    layers['counts']). Reading .X and then running normalize_total + log1p would
-    double-transform, and adata.raw would hold lognorm despite the 'raw counts'
-    label. Reads via h5py so a .uns entry an older anndata cannot decode (e.g. a
-    stored dendrogram) does not break the load.
-    """
-    import h5py
-    from anndata import AnnData
+def ray_reset():
+    """Clear any leaked Ray instance before find_diff_features."""
     try:
-        from anndata.experimental import read_elem
-    except ImportError:
-        from anndata._io.specs import read_elem
-
-    print(f" Loading RNA AnnData from {filepath}...")
-    with h5py.File(filepath, "r") as f:
-        has_counts = "layers" in f and "counts" in f["layers"]
-        X = read_elem(f["layers"]["counts"]) if has_counts else read_elem(f["X"])
-        adata = AnnData(X=X, obs=read_elem(f["obs"]), var=read_elem(f["var"]))
-
-    src = "layers['counts'] (raw)" if has_counts else ".X"
-    print(f"   [OK] {adata.n_obs} cells x {adata.n_vars} genes  [matrix: {src}]")
-    if not has_counts:
-        print("   [WARN] no layers['counts'] -- if .X is already log-normalized, "
-              "the normalize/log1p step below will DOUBLE-TRANSFORM it. Verify.")
-
-    if cell_type is not None:
-        col = celltype_col if celltype_col in adata.obs.columns else "celltype"
-        if col not in adata.obs.columns:
-            raise ValueError(f"'{celltype_col}' not found in .obs "
-                             f"(have: {adata.obs.columns.tolist()})")
-        print(f"\n Filtering to {cell_type} cells (column '{col}')...")
-        adata = adata[adata.obs[col] == cell_type].copy()
-        print(f"   [OK] {adata.n_obs} cells retained")
-
-    return adata
+        import ray
+        ray.shutdown()
+    except Exception:
+        pass
 
 
-def load_cistopic_object(filepath: str):
-    print(f"\n Loading cisTopic object from {filepath}...")
-    if not os.path.exists(filepath):
+# =============================================================================
+# PHASE 1: EVALUATE MODELS
+# =============================================================================
+
+def phase_evaluate(cfg):
+    """Draw the 4-metric plot so the topic count can be chosen by eye."""
+    from pycisTopic.lda_models import evaluate_models
+
+    print("\n" + "#" * 70)
+    print(f"#  EVALUATE: {cfg.name}")
+    print("#" * 70)
+    cfg.makedirs()
+
+    if not os.path.exists(cfg.annotated_pkl):
         raise FileNotFoundError(
-            f"[ERROR] Step 3 output missing: {filepath}\n"
-            f"        Run step3_lda_all.py for this compartment first.")
-    with open(filepath, "rb") as f:
-        obj = pickle.load(f)
-    n_regions = len(obj.region_names) if hasattr(obj, "region_names") else "N/A"
-    print(f"   [OK] {len(obj.cell_names)} cells x {n_regions} regions")
+            f"[ERROR] Step 1 output missing: {cfg.annotated_pkl}")
+
+    cistopic_obj = load_pickle(cfg.annotated_pkl, "cisTopic object")
+    print(f"  cells: {len(cistopic_obj.cell_names)}  "
+          f"regions: {len(cistopic_obj.region_names)}")
+
+    models = load_lda_models(cfg.models_dir)
+
+    save_path = os.path.join(cfg.plots_dir, "model_evaluation.pdf")
+    evaluate_models(models, select_model=None, return_model=False, save=save_path)
+    plt.close("all")
+    print(f"[OK] evaluation plot -> {save_path}")
+    print(f"[ACTION] inspect the plot, then set n_topics for '{cfg.name}' "
+          f"in COMPARTMENTS (available: "
+          f"{[model_topic_count(m) for m in models]})")
+
+
+# =============================================================================
+# PHASE 2 STEPS
+# =============================================================================
+
+def step1_load(cfg):
+    """Load the compartment object. No fallback -- the merged pre-Step-13 object
+    contains every QC-passing barcode, not just this compartment."""
+    print("\n" + "=" * 60)
+    print("STEP 1: Loading cisTopic object")
+    print("=" * 60)
+    if not os.path.exists(cfg.annotated_pkl):
+        raise FileNotFoundError(
+            f"[ERROR] Step 1 output missing: {cfg.annotated_pkl}\n"
+            f"        (Do NOT substitute cisTopicObject_merged_dbl_filtered.pkl: "
+            f"it still holds all cell types.)")
+    obj = load_pickle(cfg.annotated_pkl, "cisTopic object")
+    obj = normalize_celltype_col(obj, cfg.celltype_col)
+    print(f"   Cells: {len(obj.cell_names)}")
+    print(f"   Regions: {len(obj.region_names)}")
+    print(f"   Metadata: {obj.cell_data.columns.tolist()}")
     return obj
 
 
-def preprocess_rna(adata: ad.AnnData, target_sum: float = 1e4) -> ad.AnnData:
-    print("\n Preprocessing RNA data...")
-    adata.raw = adata.copy()
-    print("   [OK] raw counts stored in adata.raw")
-    sc.pp.normalize_total(adata, target_sum=target_sum)
-    print(f"   [OK] normalized to target sum {target_sum:.0e}")
-    sc.pp.log1p(adata)
-    print("   [OK] log1p")
-    return adata
-
-
-def transform_rna_indices(adata: ad.AnnData) -> ad.AnnData:
-    print("\n Transforming RNA barcode indices...")
-    original = adata.obs_names.tolist()
-    transformed, failed = [], []
-    for idx in original:
-        try:
-            transformed.append(transform_barcode_index(idx))
-        except ValueError:
-            failed.append(idx)
-            transformed.append(idx)
-    if failed:
-        print(f"   [WARN] {len(failed)} indices could not be transformed")
-        print(f"      examples: {failed[:3]}")
-    adata.obs_names = pd.Index(transformed)
-    print(f"   [OK] {len(transformed)} indices")
-    print(f"      example: {original[0]} -> {transformed[0]}")
-    return adata
-
-
-def remove_duplicates(adata, cistopic_obj):
-    print("\n Removing duplicate indices...")
-    rna_dups = adata.obs_names.duplicated()
-    if rna_dups.sum():
-        print(f"   [WARN] {rna_dups.sum()} duplicate RNA indices")
-        adata = adata[~rna_dups].copy()
-    ctx_dups = cistopic_obj.cell_data.index.duplicated()
-    if ctx_dups.sum():
-        print(f"   [WARN] {ctx_dups.sum()} duplicate cisTopic indices")
-        cistopic_obj.cell_data = cistopic_obj.cell_data[~ctx_dups]
-    if not rna_dups.sum() and not ctx_dups.sum():
-        print("   [OK] none found")
-    return adata, cistopic_obj
-
-
-def find_matching_cells(adata, cistopic_obj) -> List[str]:
-    """Return SORTED shared indices.
-
-    Sorted, not set-ordered: iterating a set gives an arbitrary (and between-run
-    variable) order, which would make the written cell order non-reproducible
-    even though the RNA/ATAC alignment itself stayed correct.
-    """
-    print("\n Finding matching cells between RNA and ATAC...")
-    rna_idx = set(adata.obs_names)
-    atac_idx = set(cistopic_obj.cell_data.index)
-    shared = sorted(rna_idx & atac_idx)
-
-    print(f"   [STATS] RNA cells:    {len(rna_idx)}")
-    print(f"   [STATS] ATAC cells:   {len(atac_idx)}")
-    print(f"   [OK]    shared:       {len(shared)}")
-    print(f"           RNA only:     {len(rna_idx - atac_idx)}")
-    print(f"           ATAC only:    {len(atac_idx - rna_idx)}")
-
-    if len(shared) == 0:
-        raise ValueError(
-            "No matching cells between RNA and ATAC -- barcode format mismatch.\n"
-            f"  RNA example:  {sorted(rna_idx)[:1]}\n"
-            f"  ATAC example: {sorted(atac_idx)[:1]}\n"
-            "  Check transform_barcode_index() and SAMPLE_RENAME.")
-
-    # Per-sample-group breakdown. A global count can look healthy while ONE age
-    # group silently contributes zero (the classic pre_geriatric/pre_ger case).
-    def group_of(x):
-        return x.split("___")[-1].rsplit("_", 1)[0]
-
-    shared_grp = pd.Series([group_of(s) for s in shared]).value_counts()
-    atac_grp = pd.Series([group_of(s) for s in atac_idx]).value_counts()
-    print("\n   shared cells per sample group (shared / ATAC):")
-    for g in sorted(atac_grp.index):
-        s = int(shared_grp.get(g, 0))
-        flag = "   <-- ZERO, check SAMPLE_RENAME" if s == 0 else ""
-        print(f"      {g:16s} {s:7d} / {int(atac_grp[g]):7d}{flag}")
-
-    if len(rna_idx - atac_idx):
-        print(f"\n   examples missing from ATAC: {sorted(rna_idx - atac_idx)[:2]}")
-    if len(atac_idx - rna_idx):
-        print(f"   examples missing from RNA:  {sorted(atac_idx - rna_idx)[:2]}")
-
-    return shared
-
-
-def subset_to_shared_cells(adata, cistopic_obj, shared: List[str]):
-    print("\n Subsetting to shared cells and aligning...")
-    adata = adata[shared, :].copy()
-    cistopic_obj.cell_data = cistopic_obj.cell_data.loc[adata.obs_names]
-    assert list(adata.obs_names) == list(cistopic_obj.cell_data.index), \
-        "Index alignment failed!"
-    print(f"   [OK] aligned: {adata.n_obs} cells")
-    return adata, cistopic_obj
-
-
-def set_categorical_age(adata, cistopic_obj, age_order: List[str]):
-    print("\n Setting age as ordered categorical...")
-    if "age" in adata.obs.columns:
-        valid = [a for a in age_order if a in set(adata.obs["age"].unique())]
-        adata.obs["age"] = pd.Categorical(adata.obs["age"], categories=valid,
-                                          ordered=True)
-        print(f"   [OK] RNA: {valid}")
-    else:
-        print("   [WARN] 'age' not in RNA .obs")
-
-    if "age" in cistopic_obj.cell_data.columns:
-        valid = [a for a in age_order
-                 if a in set(cistopic_obj.cell_data["age"].unique())]
-        cistopic_obj.cell_data["age"] = pd.Categorical(
-            cistopic_obj.cell_data["age"], categories=valid, ordered=True)
-        print(f"   [OK] cisTopic: {valid}")
-    else:
-        print("   [WARN] 'age' not in cisTopic cell_data")
-    return adata, cistopic_obj
-
-
-def copy_region_sets(cfg):
-    """SCENIC+ reads the region sets from the input bundle, so copy them in."""
-    if not os.path.isdir(cfg.region_sets_dir):
-        print(f"   [WARN] region_sets not found at {cfg.region_sets_dir}")
-        return
-    dst = os.path.join(cfg.scenicplus_dir, "region_sets")
-    if os.path.exists(dst):
-        shutil.rmtree(dst)
-    shutil.copytree(cfg.region_sets_dir, dst)
-    print(f"   [OK] region sets -> {dst}")
-    for sub in sorted(os.listdir(dst)):
-        p = os.path.join(dst, sub)
-        if os.path.isdir(p):
-            n = len([f for f in os.listdir(p) if f.endswith(".bed")])
-            print(f"      {sub:20s} {n} bed")
-
-
-def save_outputs(cfg, adata, cistopic_obj):
-    print("\n[SAVE] Saving SCENIC+ input bundle...")
-    os.makedirs(cfg.scenicplus_dir, exist_ok=True)
-    adata.write(cfg.gex_out)
-    print(f"   [OK] {cfg.gex_out}")
-    with open(cfg.ctx_out, "wb") as f:
-        pickle.dump(cistopic_obj, f)
-    print(f"   [OK] {cfg.ctx_out}")
-    copy_region_sets(cfg)
-
-
-def print_final_summary(cfg, adata, cistopic_obj):
+def step2_select_model(cfg, cistopic_obj, n_topics):
     print("\n" + "=" * 60)
-    print(f"[STATS] FINAL SUMMARY — {cfg.name}")
+    print(f"STEP 2: Selecting LDA model ({n_topics} topics)")
     print("=" * 60)
-    print(f"\n GEX AnnData: {adata.n_obs} cells x {adata.n_vars} genes")
-    print(f"   obs columns: {adata.obs.columns.tolist()}")
-    if "age" in adata.obs.columns:
-        print("   age distribution:")
-        for age, count in adata.obs["age"].value_counts().sort_index().items():
-            print(f"      {age}: {count}")
-    print(f"\n cisTopic: {len(cistopic_obj.cell_data)} cells")
-    if hasattr(cistopic_obj, "region_names"):
-        print(f"   regions: {len(cistopic_obj.region_names)}")
-    if getattr(cistopic_obj, "selected_model", None) is not None:
-        print(f"   topics: {model_topic_count(cistopic_obj.selected_model)}")
-    print(f"   cell_data columns: {cistopic_obj.cell_data.columns.tolist()}")
-    print(f"\n[OK] aligned index example: {list(adata.obs_names[:2])}")
+    from pycisTopic.lda_models import evaluate_models
+
+    models = load_lda_models(cfg.models_dir)
+    available = [model_topic_count(m) for m in models]
+    if n_topics not in available:
+        raise ValueError(f"[ERROR] n_topics={n_topics} not fitted for {cfg.name}. "
+                         f"Available: {available}")
+
+    selected = evaluate_models(models, select_model=n_topics, return_model=True)
+    if selected is None:                       # some versions return None
+        selected = models[available.index(n_topics)]
+    plt.close("all")
+
+    cistopic_obj.add_LDA_model(selected)
+    print(f"[OK] added model with {model_topic_count(selected)} topics")
+    save_pickle(cistopic_obj, cfg.lda_added_pkl, "object with LDA")
+    return cistopic_obj
+
+
+def step3_cluster(cfg, cistopic_obj):
+    print("\n" + "=" * 60)
+    print("STEP 3: Clustering and dimensionality reduction")
+    print("=" * 60)
+    from pycisTopic.clust_vis import (find_clusters, run_umap, run_tsne,
+                                      plot_metadata, plot_topic, cell_topic_heatmap)
+
+    find_clusters(cistopic_obj, target="cell", k=CLUSTER_K, res=CLUSTER_RESOLUTIONS,
+                  prefix="pycisTopic_", scale=True, split_pattern="-")
+    run_umap(cistopic_obj, target="cell", scale=True)
+    run_tsne(cistopic_obj, target="cell", scale=True)
+    print("[OK] clustering + UMAP + t-SNE complete")
+
+    meta_vars = [v for v in ["age", "sex", "sample_id", "celltype"]
+                 if v in cistopic_obj.cell_data.columns]
+    cluster_cols = [c for c in cistopic_obj.cell_data.columns
+                    if c.startswith("pycisTopic_")]
+
+    for var in meta_vars + cluster_cols:
+        try:
+            plot_metadata(cistopic_obj, reduction_name="UMAP", variables=[var],
+                          target="cell", num_columns=1, text_size=10, dot_size=5)
+            plt.savefig(os.path.join(cfg.plots_dir, f"umap_{var}.png"),
+                        dpi=150, bbox_inches="tight")
+            plt.savefig(os.path.join(cfg.plots_dir, f"umap_{var}.pdf"),
+                        bbox_inches="tight")
+            plt.close("all")
+            print(f"   [OK] umap_{var}")
+        except Exception as e:
+            print(f"   [WARN] could not plot {var}: {e}")
+
+    # topic contributions
+    try:
+        n_topic = model_topic_count(cistopic_obj.selected_model)
+        plot_topic(cistopic_obj, reduction_name="UMAP", target="cell",
+                   num_columns=5, topics=list(range(1, min(20, n_topic) + 1)))
+        plt.savefig(os.path.join(cfg.plots_dir, "umap_topics.png"),
+                    dpi=150, bbox_inches="tight")
+        plt.close("all")
+        print("   [OK] umap_topics")
+    except Exception as e:
+        print(f"   [WARN] could not plot topics: {e}")
+
+    # cell-topic heatmap
+    try:
+        hm_vars = [v for v in ["celltype", "age"]
+                   if v in cistopic_obj.cell_data.columns]
+        cell_topic_heatmap(cistopic_obj, variables=hm_vars or None, scale=True,
+                           legend_loc_x=1.05, legend_loc_y=-0.5, legend_dist_y=-1,
+                           figsize=(20, 10))
+        plt.savefig(os.path.join(cfg.plots_dir, "cell_topic_heatmap.png"),
+                    dpi=150, bbox_inches="tight")
+        plt.savefig(os.path.join(cfg.plots_dir, "cell_topic_heatmap.pdf"),
+                    bbox_inches="tight")
+        plt.close("all")
+        print("   [OK] cell_topic_heatmap")
+    except Exception as e:
+        print(f"   [WARN] could not generate heatmap: {e}")
+
+    return cistopic_obj
+
+
+def step4_binarize(cfg, cistopic_obj):
+    print("\n" + "=" * 60)
+    print("STEP 4: Topic binarization")
+    print("=" * 60)
+    from pycisTopic.topic_binarization import binarize_topics
+
+    top3k = binarize_topics(cistopic_obj, method="ntop", ntop=N_TOP_REGIONS,
+                            plot=True, num_columns=5)
+    plt.savefig(os.path.join(cfg.plots_dir, "topic_binarization_top3k.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print(f"   [OK] {len(top3k)} topics (top {N_TOP_REGIONS})")
+
+    otsu = binarize_topics(cistopic_obj, method="otsu", plot=True, num_columns=5)
+    plt.savefig(os.path.join(cfg.plots_dir, "topic_binarization_otsu.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print(f"   [OK] {len(otsu)} topics (Otsu)")
+
+    cell_topic = binarize_topics(cistopic_obj, target="cell", method="li",
+                                 plot=True, num_columns=5, nbins=100)
+    plt.savefig(os.path.join(cfg.plots_dir, "cell_topic_binarization_li.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print("   [OK] cell-topic matrix (Li)")
+
+    dump_region_sets(top3k, os.path.join(cfg.region_sets_dir, "Topics_top_3k"))
+    dump_region_sets(otsu, os.path.join(cfg.region_sets_dir, "Topics_otsu"))
+    return top3k, otsu, cell_topic
+
+
+def step5_topic_qc(cfg, cistopic_obj, binarized_cell_topic):
+    print("\n" + "=" * 60)
+    print("STEP 5: Topic QC and annotation")
+    print("=" * 60)
+    from pycisTopic.topic_qc import (compute_topic_metrics, plot_topic_qc,
+                                     topic_annotation)
+
+    metrics = compute_topic_metrics(cistopic_obj)
+    metrics.to_csv(os.path.join(cfg.outDir, "topic_qc_metrics.csv"))
+    print("   [OK] topic_qc_metrics.csv")
+
+    try:
+        plot_topic_qc(metrics, num_columns=4)
+        plt.savefig(os.path.join(cfg.plots_dir, "topic_qc.png"),
+                    dpi=150, bbox_inches="tight")
+        plt.close("all")
+        print("   [OK] topic_qc.png")
+    except Exception as e:
+        print(f"   [WARN] could not plot topic QC: {e}")
+
+    for var in DIFF_VARIABLES:
+        if var not in cistopic_obj.cell_data.columns:
+            print(f"   [WARN] '{var}' not in cell_data - skipping annotation")
+            continue
+        try:
+            topic_annotation(cistopic_obj, annot_var=var,
+                             binarized_cell_topic=binarized_cell_topic,
+                             general_topic_thr=0.2).to_csv(
+                os.path.join(cfg.outDir, f"topic_annotation_by_{var}.csv"))
+            print(f"   [OK] topic_annotation_by_{var}.csv")
+        except Exception as e:
+            print(f"   [WARN] could not annotate by {var}: {e}")
+
+    return metrics
+
+
+def step6_dars(cfg, cistopic_obj):
+    print("\n" + "=" * 60)
+    print("STEP 6: Imputation and differential accessibility")
+    print("=" * 60)
+    from pycisTopic.diff_features import (impute_accessibility, normalize_scores,
+                                          find_highly_variable_features,
+                                          find_diff_features)
+    from pycisTopic.utils import region_names_to_coordinates
+
+    imputed = impute_accessibility(cistopic_obj, selected_cells=None,
+                                   selected_regions=None, scale_factor=10 ** 6)
+    print(f"   [OK] imputed: {imputed.mtx.shape if hasattr(imputed,'mtx') else ''}")
+
+    normalized = normalize_scores(imputed, scale_factor=10 ** 4)
+    print("   [OK] normalized")
+
+    variable_regions = find_highly_variable_features(
+        normalized, min_disp=MIN_DISP, min_mean=MIN_MEAN, max_mean=MAX_MEAN,
+        max_disp=np.inf, n_bins=20, n_top_features=None, plot=True)
+    plt.savefig(os.path.join(cfg.plots_dir, "highly_variable_regions.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print(f"   [OK] {len(variable_regions)} highly variable regions")
+
+    region_names_to_coordinates(variable_regions).sort_values(
+        ["Chromosome", "Start", "End"]).to_csv(
+        os.path.join(cfg.region_sets_dir, "highly_variable_regions.bed"),
+        sep="\t", header=False, index=False)
+
+    all_markers = {}
+    for var in DIFF_VARIABLES:
+        if var not in cistopic_obj.cell_data.columns:
+            print(f"\n   [WARN] '{var}' not in cell_data - skipping DARs")
+            continue
+        print(f"\n[STATS] DARs by {var}...")
+        try:
+            ray_reset()   # leaked Ray instances hang the next call
+            markers = find_diff_features(
+                cistopic_obj, imputed, variable=var,
+                var_features=variable_regions, contrasts=None,
+                adjpval_thr=ADJPVAL_THR, log2fc_thr=LOG2FC_THR,
+                n_cpu=DIFF_N_CPU, _temp_dir=None, split_pattern="-")
+            all_markers[var] = markers
+
+            for group, df in markers.items():
+                df.to_csv(os.path.join(cfg.outDir, f"DARs_{var}_{group}.csv"))
+            dump_region_sets(markers, os.path.join(cfg.region_sets_dir, f"DARs_{var}"))
+
+            print(f"   DAR summary ({var}):")
+            for group, df in markers.items():
+                if "Log2FC" in df.columns:
+                    up, dn = int((df["Log2FC"] > 0).sum()), int((df["Log2FC"] < 0).sum())
+                    print(f"     {group}: {len(df)} DARs (up {up}, down {dn})")
+                else:
+                    print(f"     {group}: {len(df)} DARs")
+        except Exception as e:
+            print(f"   [WARN] error finding {var} DARs: {e}")
+
+    return imputed, variable_regions, all_markers
+
+
+def step7_plot_features(cfg, cistopic_obj, imputed, all_markers):
+    print("\n" + "=" * 60)
+    print("STEP 7: Plotting top imputed features")
+    print("=" * 60)
+    from pycisTopic.clust_vis import plot_imputed_features
+
+    if not all_markers:
+        print("[WARN] no markers - skipping")
+        return
+
+    for var, markers in all_markers.items():
+        for group, df in markers.items():
+            if len(df) == 0:
+                continue
+            if "Log2FC" in df.columns:
+                top = df.reindex(df["Log2FC"].abs().sort_values(
+                    ascending=False).index).head(6).index.tolist()
+            else:
+                top = df.head(6).index.tolist()
+            try:
+                plot_imputed_features(cistopic_obj, reduction_name="UMAP",
+                                      imputed_acc_obj=imputed, features=top,
+                                      scale=True, num_columns=3)
+                plt.savefig(os.path.join(
+                    cfg.plots_dir, f"imputed_features_{var}_{group}.png"),
+                    dpi=150, bbox_inches="tight")
+                plt.close("all")
+                print(f"   [OK] imputed_features_{var}_{group}")
+            except Exception as e:
+                print(f"   [WARN] {var}/{group}: {e}")
+
+
+def step8_save(cfg, cistopic_obj):
+    print("\n" + "=" * 60)
+    print("STEP 8: Saving final cisTopic object")
+    print("=" * 60)
+    save_pickle(cistopic_obj, cfg.complete_pkl, "final object")
+    print(f"Cells: {len(cistopic_obj.cell_names)}")
+    print(f"Regions: {len(cistopic_obj.region_names)}")
+    print(f"Topics: {model_topic_count(cistopic_obj.selected_model)}")
+    return cfg.complete_pkl
 
 
 # =============================================================================
-# PER-COMPARTMENT DRIVER
+# PHASE 2 DRIVER
 # =============================================================================
 
-def run_compartment(cfg: Cfg, dry_run: bool = False):
+def phase_run(cfg, n_topics_override=None, skip_steps=()):
     print("\n" + "#" * 70)
-    print(f"#  COMPARTMENT: {cfg.name}  ->  {cfg.scenicplus_dir}")
+    print(f"#  RUN: {cfg.name}  ->  {cfg.outDir}")
     print("#" * 70)
+    cfg.makedirs()
 
-    if not os.path.exists(cfg.rna_h5ad):
-        raise FileNotFoundError(f"[ERROR] RNA object not found: {cfg.rna_h5ad}")
+    n_topics = n_topics_override or cfg.n_topics
+    if n_topics is None:
+        raise ValueError(
+            f"[ERROR] no topic count set for '{cfg.name}'.\n"
+            f"        Run --evaluate, inspect {cfg.plots_dir}/model_evaluation.pdf, "
+            f"then set n_topics in COMPARTMENTS (or pass --topics).")
 
-    adata = load_rna_anndata(cfg.rna_h5ad, celltype_col=cfg.celltype_col,
-                             cell_type=cfg.cell_type_filter)
-    adata = preprocess_rna(adata, target_sum=TARGET_SUM)
-    adata = transform_rna_indices(adata)
+    cistopic_obj = step1_load(cfg)
+    cistopic_obj = step2_select_model(cfg, cistopic_obj, n_topics)
 
-    cistopic_obj = load_cistopic_object(cfg.cistopic_pkl)
-    adata, cistopic_obj = remove_duplicates(adata, cistopic_obj)
+    if 3 not in skip_steps:
+        cistopic_obj = step3_cluster(cfg, cistopic_obj)
 
-    shared = find_matching_cells(adata, cistopic_obj)
+    binarized_cell_topic = None
+    if 4 not in skip_steps:
+        _, _, binarized_cell_topic = step4_binarize(cfg, cistopic_obj)
 
-    if dry_run:
-        print("\n[DRY RUN] overlap reported; nothing written.")
-        return None, None
+    if 5 not in skip_steps and binarized_cell_topic is not None:
+        step5_topic_qc(cfg, cistopic_obj, binarized_cell_topic)
 
-    adata, cistopic_obj = subset_to_shared_cells(adata, cistopic_obj, shared)
-    adata, cistopic_obj = set_categorical_age(adata, cistopic_obj, DESIRED_AGE_ORDER)
-    save_outputs(cfg, adata, cistopic_obj)
-    print_final_summary(cfg, adata, cistopic_obj)
-    return adata, cistopic_obj
+    imputed, all_markers = None, {}
+    if 6 not in skip_steps:
+        imputed, _, all_markers = step6_dars(cfg, cistopic_obj)
+
+    if 7 not in skip_steps and imputed is not None:
+        step7_plot_features(cfg, cistopic_obj, imputed, all_markers)
+
+    step8_save(cfg, cistopic_obj)
+
+    print("\n" + "=" * 60)
+    print(f"[OK] {cfg.name} COMPLETE ({n_topics} topics)")
+    print(f"     next: step4_rna_atac_prep_all.py --run {cfg.name}")
+    print("=" * 60)
+    return cistopic_obj
 
 
 # =============================================================================
@@ -436,46 +655,65 @@ def run_compartment(cfg: Cfg, dry_run: bool = False):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Prepare RNA + ATAC data for SCENIC+ (all compartments)")
-    p.add_argument("--run", nargs="+", default=None, choices=sorted(COMPARTMENTS),
-                   help="Which compartments to prepare (default: all)")
-    p.add_argument("--rna", type=str, default=None,
-                   help="Override the RNA .h5ad (single compartment only)")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Report RNA/ATAC overlap and exit without writing")
+        description="SCENIC+ Step 3: LDA model selection, topic analysis, and DARs")
+    p.add_argument("--evaluate", action="store_true",
+                   help="PHASE 1: draw model-evaluation plots and exit")
+    p.add_argument("--run", nargs="*", default=None, metavar="COMPARTMENT",
+                   help="PHASE 2: run downstream analysis "
+                        "(no names = all compartments)")
+    p.add_argument("--topics", type=int, default=None,
+                   help="Override n_topics (only sensible with a single --run)")
+    p.add_argument("--skip", type=int, nargs="+", default=[],
+                   help="Step numbers to skip (3-7), e.g. --skip 7")
     p.add_argument("--stop-on-error", action="store_true",
                    help="Abort on first failure (default: continue)")
     args = p.parse_args()
 
-    names = args.run or list(COMPARTMENTS)
-    if args.rna and len(names) > 1:
-        p.error("--rna applies to a single compartment; "
-                "set rna_h5ad in COMPARTMENTS for multi-compartment runs")
+    if not args.evaluate and args.run is None:
+        p.error("nothing to do: pass --evaluate and/or --run")
 
-    print("\n" + "=" * 60)
-    print("RNA-ATAC INTEGRATION PREPARATION FOR SCENIC+")
-    print(f"Compartments: {names}")
-    print("=" * 60)
+    names = args.run if args.run else list(COMPARTMENTS)
+    unknown = [n for n in names if n not in COMPARTMENTS]
+    if unknown:
+        p.error(f"unknown compartment(s): {unknown}. "
+                f"Choose from {sorted(COMPARTMENTS)}")
 
-    results = {}
-    for name in names:
-        try:
-            run_compartment(Cfg(name, COMPARTMENTS[name], rna_override=args.rna),
-                            dry_run=args.dry_run)
-            results[name] = "OK"
-        except Exception as e:
-            print(f"\n[ERROR] {name} failed: {e}")
-            traceback.print_exc()
-            if args.stop_on_error:
-                raise
-            print("[INFO] Continuing to next compartment...\n")
-            results[name] = "FAILED"
+    if args.topics is not None and len(names) > 1:
+        p.error("--topics applies to a single compartment; "
+                "set n_topics in COMPARTMENTS for multi-compartment runs")
 
-    print("\n" + "=" * 60)
-    print("STEP 4 FINISHED")
-    for k, v in results.items():
-        print(f"   {k}: {v}")
-    print("=" * 60)
+    if args.evaluate:
+        for name in names:
+            try:
+                phase_evaluate(Cfg(name, COMPARTMENTS[name]))
+            except Exception as e:
+                print(f"\n[ERROR] evaluate {name} failed: {e}")
+                traceback.print_exc()
+                if args.stop_on_error:
+                    raise
+        if args.run is None:
+            print("\n[NEXT] set n_topics per compartment, then re-run with --run")
+            return
+
+    if args.run is not None:
+        results = {}
+        for name in names:
+            try:
+                phase_run(Cfg(name, COMPARTMENTS[name]),
+                          n_topics_override=args.topics,
+                          skip_steps=set(args.skip))
+                results[name] = "OK"
+            except Exception as e:
+                print(f"\n[ERROR] {name} failed: {e}")
+                traceback.print_exc()
+                if args.stop_on_error:
+                    raise
+                results[name] = "FAILED"
+        print("\n" + "=" * 60)
+        print("STEP 3 FINISHED")
+        for k, v in results.items():
+            print(f"   {k}: {v}")
+        print("=" * 60)
 
 
 if __name__ == "__main__":
