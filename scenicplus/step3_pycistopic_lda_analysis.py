@@ -7,7 +7,7 @@ Step 2 (MALLET models), and produces everything SCENIC+ needs.
 
 TWO PHASES -- topic count cannot be automated
 ---------------------------------------------
-The number of topics has to be chosen from the model-quality curves
+The number of topics has to be chosen by eye from the model-quality curves
 (Arun / Cao-Juan crossover, Mimno coherence, log-likelihood), and it differs per
 compartment. So:
 
@@ -20,7 +20,7 @@ compartment. So:
   PHASE 2   python step3_lda_all.py --run
             -> select model, cluster/UMAP/t-SNE, binarize topics, topic QC +
                annotation, imputation, DARs (age / celltype / sex), region-set
-               BEDs, final object, and the SCENIC+ input bundle.
+               BEDs, and the final cisTopic object.
 
 Outputs per compartment
 -----------------------
@@ -31,8 +31,14 @@ Outputs per compartment
   <out_dir>/region_sets/Topics_top_3k/*.bed
   <out_dir>/region_sets/DARs_{age,celltype,sex}/*.bed
   <out_dir>/cisTopicObject_lda_complete.pkl
-  <out_dir>/scenicplus_input/{<suffix>_GEX_anndata.h5ad,
-                              <suffix>_cisTopic_obj.pkl, region_sets/}
+
+NEXT STEP
+---------
+RNA-ATAC integration and the SCENIC+ input bundle are NOT done here -- they are
+Step 4 (step4_rna_atac_prep_all.py), which consumes
+<out_dir>/cisTopicObject_lda_complete.pkl and <out_dir>/region_sets/. Keeping it
+separate means the integration can be redone (different RNA object, different
+filter, barcode fixes) without repeating LDA selection and DAR calling.
 
 Usage
 -----
@@ -42,13 +48,13 @@ Usage
   python step3_lda_all.py --run myeloid --topics 50  # one-off topic override
   python step3_lda_all.py --run T_ILC --skip 7       # skip a step
 
+Author: Nishat Sarker
+License: MIT
 """
 
 import argparse
 import os
 import pickle
-import re
-import shutil
 import traceback
 import warnings
 
@@ -81,11 +87,9 @@ MAX_MEAN = 3
 ADJPVAL_THR = 0.05
 LOG2FC_THR = np.log2(1.5)
 
-AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
-TARGET_SUM = 1e4
-
 # Variables to compute DARs / topic annotations for, if present in cell_data
 DIFF_VARIABLES = ["age", "celltype", "sex"]
+
 
 # =============================================================================
 # PER-COMPARTMENT REGISTRY
@@ -94,7 +98,7 @@ DIFF_VARIABLES = ["age", "celltype", "sex"]
 #                      full-atlas run); normalized to 'celltype' internally
 #   n_topics         : CHOSEN topic count. None until you have looked at the
 #                      evaluation plot from PHASE 1.
-#   rna_h5ad         : matching RNA object for the SCENIC+ GEX input
+# (rna_h5ad lives in Step 4's registry, not here)
 # =============================================================================
 
 COMPARTMENTS = {
@@ -104,7 +108,6 @@ COMPARTMENTS = {
         suffix="all_celltypes",
         celltype_col="cell_type",
         n_topics=None,                       # <-- set after PHASE 1
-        rna_h5ad="liver_atlas.h5ad",
     ),
 
     "Hepatocyte": dict(
@@ -112,7 +115,6 @@ COMPARTMENTS = {
         suffix="Heps",
         celltype_col="celltype",
         n_topics=None,
-        rna_h5ad="Hepatocyte.h5ad",
     ),
 
     "endothelial_Kupffer02": dict(
@@ -120,7 +122,6 @@ COMPARTMENTS = {
         suffix="endothelial_Kupffer02",
         celltype_col="celltype",
         n_topics=None,
-        rna_h5ad="endothelial_Kupffer02.h5ad",
     ),
 
     "myeloid": dict(
@@ -128,7 +129,6 @@ COMPARTMENTS = {
         suffix="myeloid",
         celltype_col="celltype",
         n_topics=None,
-        rna_h5ad="myeloid.h5ad",
     ),
 
     "T_ILC": dict(
@@ -136,7 +136,6 @@ COMPARTMENTS = {
         suffix="T_ILC",
         celltype_col="celltype",
         n_topics=None,                       # notebook landed on 50 for T cells
-        rna_h5ad="T_ILC.h5ad",
     ),
 }
 
@@ -152,12 +151,10 @@ class Cfg:
         self.suffix = spec["suffix"]
         self.celltype_col = spec.get("celltype_col", "celltype")
         self.n_topics = spec.get("n_topics")
-        self.rna_h5ad = spec.get("rna_h5ad")
 
         self.models_dir = os.path.join(self.outDir, "mal_result")
         self.plots_dir = os.path.join(self.outDir, "plots")
         self.region_sets_dir = os.path.join(self.outDir, "region_sets")
-        self.scenicplus_dir = os.path.join(self.outDir, "scenicplus_input")
 
         self.annotated_pkl = os.path.join(
             self.outDir, f"cisTopicObject_filtered_annotated_{self.suffix}.pkl")
@@ -166,7 +163,6 @@ class Cfg:
 
     def makedirs(self):
         os.makedirs(self.plots_dir, exist_ok=True)
-        os.makedirs(self.scenicplus_dir, exist_ok=True)
         for sub in ["Topics_otsu", "Topics_top_3k"] + \
                    [f"DARs_{v}" for v in DIFF_VARIABLES]:
             os.makedirs(os.path.join(self.region_sets_dir, sub), exist_ok=True)
@@ -607,99 +603,6 @@ def step8_save(cfg, cistopic_obj):
     return cfg.complete_pkl
 
 
-def step9_scenicplus_input(cfg, cistopic_obj):
-    """Build the SCENIC+ input bundle: aligned GEX AnnData + cisTopic + region sets."""
-    print("\n" + "=" * 60)
-    print("STEP 9: Preparing SCENIC+ input")
-    print("=" * 60)
-
-    import h5py
-    import scanpy as sc
-    from anndata import AnnData
-    try:
-        from anndata.experimental import read_elem
-    except ImportError:
-        from anndata._io.specs import read_elem
-
-    if not cfg.rna_h5ad or not os.path.exists(cfg.rna_h5ad):
-        print(f"[WARN] RNA object not found ({cfg.rna_h5ad}) - skipping SCENIC+ prep")
-        return None
-
-    # --- read X/obs/var only
-    with h5py.File(cfg.rna_h5ad, "r") as f:
-        has_counts = "layers" in f and "counts" in f["layers"]
-        X = read_elem(f["layers"]["counts"]) if has_counts else read_elem(f["X"])
-        adata = AnnData(X=X, obs=read_elem(f["obs"]), var=read_elem(f["var"]))
-    print(f"  RNA: {adata.n_obs} cells x {adata.n_vars} genes "
-          f"({'raw counts from layers/counts' if has_counts else 'X (VERIFY raw!)'})")
-    if not has_counts:
-        print("  [WARN] no layers/counts found -- if .X is already log-normalized, "
-              "the normalize/log1p below will double-transform it.")
-
-    adata.raw = adata.copy()                       
-    sc.pp.normalize_total(adata, target_sum=TARGET_SUM)
-    sc.pp.log1p(adata)
-
-    orig = adata.obs_names.tolist()
-    adata.obs_names = pd.Index([transform_barcode_index(i) for i in orig])
-    print(f"  barcode: {orig[0]} -> {adata.obs_names[0]}")
-
-    # --- align to the cisTopic object ---
-    adata = adata[~adata.obs_names.duplicated()].copy()
-    cd = cistopic_obj.cell_data
-    cistopic_obj.cell_data = cd[~cd.index.duplicated()]
-
-    rna_idx = set(adata.obs_names)
-    atac_idx = set(cistopic_obj.cell_data.index)
-    shared = sorted(rna_idx & atac_idx)
-    print(f"  RNA {len(rna_idx)} | ATAC {len(atac_idx)} | shared {len(shared)}")
-    print(f"  RNA-only: {len(rna_idx - atac_idx)}  ATAC-only: {len(atac_idx - rna_idx)}")
-
-    if len(shared) == 0:
-        raise ValueError("no shared cells -> barcode format mismatch. "
-                         f"RNA example: {list(rna_idx)[:1]} "
-                         f"ATAC example: {list(atac_idx)[:1]}")
-
-    # per-age-group match diagnostic: catches a SAMPLE_RENAME entry being wrong
-    # for one group only (e.g. pre_geriatric), which a global count would hide.
-    grp = pd.Series([s.split("___")[-1].rsplit("_", 1)[0] for s in shared])
-    print("  shared cells per sample group:")
-    print("   ", grp.value_counts().to_dict())
-
-    adata = adata[shared, :].copy()
-    cistopic_obj.cell_data = cistopic_obj.cell_data.loc[adata.obs_names]
-    assert list(adata.obs_names) == list(cistopic_obj.cell_data.index), "alignment failed"
-    print(f"  [OK] aligned: {adata.n_obs} cells")
-
-    # ordered age categorical on both sides
-    if "age" in adata.obs.columns:
-        cats = [a for a in AGE_ORDER if a in set(adata.obs["age"].unique())]
-        adata.obs["age"] = pd.Categorical(adata.obs["age"], categories=cats, ordered=True)
-        if "age" in cistopic_obj.cell_data.columns:
-            cistopic_obj.cell_data["age"] = pd.Categorical(
-                cistopic_obj.cell_data["age"], categories=cats, ordered=True)
-        print(f"  age order: {cats}")
-
-    # --- write bundle ---
-    gex_path = os.path.join(cfg.scenicplus_dir, f"{cfg.suffix}_GEX_anndata.h5ad")
-    ctx_path = os.path.join(cfg.scenicplus_dir, f"{cfg.suffix}_cisTopic_obj.pkl")
-    adata.write(gex_path)
-    save_pickle(cistopic_obj, ctx_path, "aligned cisTopic object")
-
-    dst = os.path.join(cfg.scenicplus_dir, "region_sets")
-    if os.path.exists(dst):
-        shutil.rmtree(dst)
-    shutil.copytree(cfg.region_sets_dir, dst)
-
-    print(f"  saved: {gex_path}")
-    print(f"  saved: {ctx_path}")
-    for sub in sorted(os.listdir(dst)):
-        p = os.path.join(dst, sub)
-        if os.path.isdir(p):
-            print(f"    {sub:18s} {len([f for f in os.listdir(p) if f.endswith('.bed')])} bed")
-    return gex_path
-
-
 # =============================================================================
 # PHASE 2 DRIVER
 # =============================================================================
@@ -739,11 +642,9 @@ def phase_run(cfg, n_topics_override=None, skip_steps=()):
 
     step8_save(cfg, cistopic_obj)
 
-    if 9 not in skip_steps:
-        step9_scenicplus_input(cfg, cistopic_obj)
-
     print("\n" + "=" * 60)
     print(f"[OK] {cfg.name} COMPLETE ({n_topics} topics)")
+    print(f"     next: step4_rna_atac_prep_all.py --run {cfg.name}")
     print("=" * 60)
     return cistopic_obj
 
@@ -754,7 +655,7 @@ def phase_run(cfg, n_topics_override=None, skip_steps=()):
 
 def main():
     p = argparse.ArgumentParser(
-        description="SCENIC+ Step 3: LDA selection, topics, DARs, SCENIC+ input")
+        description="SCENIC+ Step 3: LDA model selection, topic analysis, and DARs")
     p.add_argument("--evaluate", action="store_true",
                    help="PHASE 1: draw model-evaluation plots and exit")
     p.add_argument("--run", nargs="*", default=None, metavar="COMPARTMENT",
@@ -763,7 +664,7 @@ def main():
     p.add_argument("--topics", type=int, default=None,
                    help="Override n_topics (only sensible with a single --run)")
     p.add_argument("--skip", type=int, nargs="+", default=[],
-                   help="Step numbers to skip, e.g. --skip 7 9")
+                   help="Step numbers to skip (3-7), e.g. --skip 7")
     p.add_argument("--stop-on-error", action="store_true",
                    help="Abort on first failure (default: continue)")
     args = p.parse_args()
