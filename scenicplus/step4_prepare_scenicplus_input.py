@@ -1,589 +1,482 @@
 #!/usr/bin/env python3
 """
-RNA-ATAC Data Integration Preparation for SCENIC+
-This script prepares matched RNA (GEX) and ATAC (cisTopic) data for SCENIC+ analysis
-by aligning barcodes, filtering to common cells, and ensuring consistent metadata.
+SCENIC+ Step 4: RNA-ATAC Integration Prep — ALL COMPARTMENTS
+=============================================================
+Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment: reconstructs
+barcodes, intersects cells, orders both objects identically, and writes the
+SCENIC+ input bundle.
 
+Consumes
+--------
+  <out_dir>/cisTopicObject_lda_complete.pkl     (Step 3)
+  <out_dir>/region_sets/                        (Step 3)
+  <rna_h5ad>                                    (compartment RNA object)
+
+Produces
+--------
+  <out_dir>/scenicplus_input/<suffix>_GEX_anndata.h5ad
+  <out_dir>/scenicplus_input/<suffix>_cisTopic_obj.pkl
+  <out_dir>/scenicplus_input/region_sets/
+
+NOTE: this duplicates step 9 of step3_lda_all.py. Keep ONE as canonical -- the
+recommended split is to run Step 3 with `--skip 9` and use this script, so the
+integration can be redone (different RNA object, different filter) without
+repeating LDA.
+
+Usage
+-----
+  python step4_rna_atac_prep_all.py                  # all compartments
+  python step4_rna_atac_prep_all.py --run T_ILC
+  python step4_rna_atac_prep_all.py --run myeloid --rna other.h5ad
+  python step4_rna_atac_prep_all.py --dry-run        # report overlap, write nothing
+
+Author: Nishat Sarker
+License: MIT
 """
 
-# =============================================================================
-# IMPORTS
-# =============================================================================
-
+import argparse
 import os
-import re
 import pickle
+import re
+import shutil
+import traceback
 import warnings
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import anndata as ad
 import scanpy as sc
 
-# Suppress warnings for cleaner output
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 
 # =============================================================================
-# CONFIGURATION
+# SHARED CONFIGURATION
 # =============================================================================
 
-# Input file paths
-RNA_ANNDATA_PATH = "integrated_scvi.h5ad"
-CISTOPIC_OBJ_PATH = "cisTopicObject_lda_hep_all_cluster.pkl"
-
-# Output file paths
-OUTPUT_DIR = "scenicplus_input"
-OUTPUT_GEX_PATH = os.path.join(OUTPUT_DIR, "GEX_anndata.h5ad")
-OUTPUT_CISTOPIC_PATH = os.path.join(OUTPUT_DIR, "cisTopic_obj.pkl")
-
-# Cell type to extract (set to None to use all cells)
-CELL_TYPE_FILTER = "Hepatocyte"
-
-# Age order for categorical variable
-DESIRED_AGE_ORDER = ['young', 'mid_age', 'old', 'pre_geriatric', 'geriatric']
-
-# Normalization parameters
+DESIRED_AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
 TARGET_SUM = 1e4
 
+# RNA obs_names spell some sample groups differently from the cisTopic cell
+# names (RNA 'pre_geriatric_3' vs cisTopic 'pre_ger_03', because Step 1
+# abbreviated it when building sample ids). Applied in transform_barcode_index().
+# If one age group shows zero shared cells, the fix belongs here.
+SAMPLE_RENAME = {"pre_geriatric": "pre_ger"}
+
 
 # =============================================================================
-# HELPER FUNCTIONS
+# PER-COMPARTMENT REGISTRY  (out_dir / suffix must match Steps 1-3)
+#   celltype_col     : annotation column ('cell_type' for the full-atlas run)
+#   cell_type_filter : None = no pre-filter; the RNA<->ATAC intersection already
+#                      defines the compartment when rna_h5ad is the subset object
+# =============================================================================
+
+COMPARTMENTS = {
+
+    "all_celltypes": dict(
+        out_dir="outs_all_celltypes",
+        suffix="all_celltypes",
+        rna_h5ad="liver_atlas.h5ad",
+        celltype_col="cell_type",
+        cell_type_filter=None,
+    ),
+
+    "Hepatocyte": dict(
+        out_dir="outs_Heps",
+        suffix="Heps",
+        rna_h5ad="Hepatocyte.h5ad",
+        celltype_col="celltype",
+        cell_type_filter=None,
+    ),
+
+    "endothelial_Kupffer02": dict(
+        out_dir="outs_endothelial_Kupffer02",
+        suffix="endothelial_Kupffer02",
+        rna_h5ad="endothelial_Kupffer02.h5ad",
+        celltype_col="celltype",
+        cell_type_filter=None,
+    ),
+
+    "myeloid": dict(
+        out_dir="outs_myeloid",
+        suffix="myeloid",
+        rna_h5ad="myeloid.h5ad",
+        celltype_col="celltype",
+        cell_type_filter=None,
+    ),
+
+    "T_ILC": dict(
+        out_dir="outs_T_ILC",
+        suffix="T_ILC",
+        rna_h5ad="T_ILC.h5ad",
+        celltype_col="celltype",
+        cell_type_filter=None,
+    ),
+}
+
+
+# =============================================================================
+# CONFIG OBJECT
+# =============================================================================
+
+class Cfg:
+    def __init__(self, name, spec, rna_override=None):
+        self.name = name
+        self.outDir = spec["out_dir"]
+        self.suffix = spec["suffix"]
+        self.rna_h5ad = rna_override or spec["rna_h5ad"]
+        self.celltype_col = spec.get("celltype_col", "celltype")
+        self.cell_type_filter = spec.get("cell_type_filter")
+
+        self.cistopic_pkl = os.path.join(self.outDir, "cisTopicObject_lda_complete.pkl")
+        self.region_sets_dir = os.path.join(self.outDir, "region_sets")
+        self.scenicplus_dir = os.path.join(self.outDir, "scenicplus_input")
+        self.gex_out = os.path.join(self.scenicplus_dir,
+                                    f"{self.suffix}_GEX_anndata.h5ad")
+        self.ctx_out = os.path.join(self.scenicplus_dir,
+                                    f"{self.suffix}_cisTopic_obj.pkl")
+
+
+# =============================================================================
+# HELPERS
 # =============================================================================
 
 def transform_barcode_index(index: str) -> str:
+    """RNA obs_name -> cisTopic cell name.
+
+    Handles BOTH 'ACGT-geriatric_3' and 'ACGT-1-geriatric_3'. The previous
+    rsplit('-', 1) implementation turned the second form into
+    'ACGT-1-1-geriatric_03___geriatric_03', which matches nothing -- the failure
+    is silent because it just lowers the shared-cell count.
+
+        ACGT-geriatric_3        -> ACGT-1-geriatric_03___geriatric_03
+        ACGT-1-geriatric_3      -> ACGT-1-geriatric_03___geriatric_03
+        ACGT-pre_geriatric_3    -> ACGT-1-pre_ger_03___pre_ger_03
     """
-    Transform RNA barcode index to match cisTopic format.
-    
-    Input format:  ACGTACGT-geriatric_3
-    Output format: ACGTACGT-1-geriatric_03___geriatric_03
-    
-    Parameters
-    ----------
-    index : str
-        Original barcode index from RNA AnnData
-        
-    Returns
-    -------
-    str
-        Transformed barcode index matching cisTopic format
-    """
-    # Split the index into barcode and sample group (split at last hyphen)
-    parts = index.rsplit('-', maxsplit=1)
-    if len(parts) != 2:
-        raise ValueError(f"Index format is invalid: {index}")
-    
-    barcode, sample = parts
-    
-    # Zero-pad the sample identifier (e.g., geriatric_3 -> geriatric_03)
-    sample_padded = re.sub(r'_(\d+)$', lambda x: f"_{int(x.group(1)):02d}", sample)
-    
-    # Add -1- and the '___sample' suffix
-    transformed_index = f"{barcode}-1-{sample_padded}___{sample_padded}"
-    
-    return transformed_index
+    s = str(index).split("___")[0]
+    parts = s.split("-")
+    dna = parts[0]
+    rest = [p for p in parts[1:] if p != "1"]
+    if not rest:
+        raise ValueError(f"cannot parse sample from index: {index}")
+    sample = "-".join(rest)
+    for old, new in SAMPLE_RENAME.items():
+        sample = re.sub(rf"^{old}", new, sample)
+    sample = re.sub(r"_(\d+)$", lambda m: f"_{int(m.group(1)):02d}", sample)
+    return f"{dna}-1-{sample}___{sample}"
 
 
-def load_rna_anndata(filepath: str, cell_type: Optional[str] = None) -> ad.AnnData:
+def model_topic_count(model):
+    for attr in ("n_topic", "topic_no", "n_topics"):
+        if hasattr(model, attr):
+            return int(getattr(model, attr))
+    return None
+
+
+def load_rna_anndata(filepath: str, celltype_col: str = "celltype",
+                     cell_type: Optional[str] = None) -> ad.AnnData:
+    """Load RNA object, preferring RAW COUNTS from layers['counts'].
+
+    In the subclustered objects .X is ALREADY log-normalized (raw counts live in
+    layers['counts']). Reading .X and then running normalize_total + log1p would
+    double-transform, and adata.raw would hold lognorm despite the 'raw counts'
+    label. Reads via h5py so a .uns entry an older anndata cannot decode (e.g. a
+    stored dendrogram) does not break the load.
     """
-    Load RNA AnnData object and optionally filter to specific cell type.
-    
-    Parameters
-    ----------
-    filepath : str
-        Path to the h5ad file
-    cell_type : str, optional
-        Cell type to filter for (uses 'celltype' column)
-        
-    Returns
-    -------
-    ad.AnnData
-        Loaded (and optionally filtered) AnnData object
-    """
+    import h5py
+    from anndata import AnnData
+    try:
+        from anndata.experimental import read_elem
+    except ImportError:
+        from anndata._io.specs import read_elem
+
     print(f" Loading RNA AnnData from {filepath}...")
-    adata = sc.read(filepath)
-    print(f"   [OK] Loaded {adata.n_obs} cells x {adata.n_vars} genes")
-    
+    with h5py.File(filepath, "r") as f:
+        has_counts = "layers" in f and "counts" in f["layers"]
+        X = read_elem(f["layers"]["counts"]) if has_counts else read_elem(f["X"])
+        adata = AnnData(X=X, obs=read_elem(f["obs"]), var=read_elem(f["var"]))
+
+    src = "layers['counts'] (raw)" if has_counts else ".X"
+    print(f"   [OK] {adata.n_obs} cells x {adata.n_vars} genes  [matrix: {src}]")
+    if not has_counts:
+        print("   [WARN] no layers['counts'] -- if .X is already log-normalized, "
+              "the normalize/log1p step below will DOUBLE-TRANSFORM it. Verify.")
+
     if cell_type is not None:
-        if 'celltype' not in adata.obs.columns:
-            raise ValueError("'celltype' column not found in AnnData.obs")
-        
-        print(f"\n Filtering to {cell_type} cells...")
-        adata = adata[adata.obs['celltype'] == cell_type].copy()
-        print(f"   [OK] Filtered to {adata.n_obs} {cell_type} cells")
-    
+        col = celltype_col if celltype_col in adata.obs.columns else "celltype"
+        if col not in adata.obs.columns:
+            raise ValueError(f"'{celltype_col}' not found in .obs "
+                             f"(have: {adata.obs.columns.tolist()})")
+        print(f"\n Filtering to {cell_type} cells (column '{col}')...")
+        adata = adata[adata.obs[col] == cell_type].copy()
+        print(f"   [OK] {adata.n_obs} cells retained")
+
     return adata
 
 
 def load_cistopic_object(filepath: str):
-    """
-    Load cisTopic object from pickle file.
-    
-    Parameters
-    ----------
-    filepath : str
-        Path to the pickle file
-        
-    Returns
-    -------
-    CistopicObject
-        Loaded cisTopic object
-    """
     print(f"\n Loading cisTopic object from {filepath}...")
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(
+            f"[ERROR] Step 3 output missing: {filepath}\n"
+            f"        Run step3_lda_all.py for this compartment first.")
     with open(filepath, "rb") as f:
-        cistopic_obj = pickle.load(f)
-    
-    n_cells = len(cistopic_obj.cell_names)
-    n_regions = len(cistopic_obj.region_names) if hasattr(cistopic_obj, 'region_names') else 'N/A'
-    print(f"   [OK] Loaded {n_cells} cells x {n_regions} regions")
-    
-    return cistopic_obj
+        obj = pickle.load(f)
+    n_regions = len(obj.region_names) if hasattr(obj, "region_names") else "N/A"
+    print(f"   [OK] {len(obj.cell_names)} cells x {n_regions} regions")
+    return obj
 
 
 def preprocess_rna(adata: ad.AnnData, target_sum: float = 1e4) -> ad.AnnData:
-    """
-    Preprocess RNA data: store raw, normalize, and log-transform.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        Raw RNA AnnData object
-    target_sum : float
-        Target sum for normalization
-        
-    Returns
-    -------
-    ad.AnnData
-        Preprocessed AnnData object
-    """
     print("\n Preprocessing RNA data...")
-    
-    # Store raw counts
     adata.raw = adata.copy()
-    print("   [OK] Stored raw counts in adata.raw")
-    
-    # Normalize
+    print("   [OK] raw counts stored in adata.raw")
     sc.pp.normalize_total(adata, target_sum=target_sum)
-    print(f"   [OK] Normalized to target sum {target_sum:.0e}")
-    
-    # Log transform
+    print(f"   [OK] normalized to target sum {target_sum:.0e}")
     sc.pp.log1p(adata)
-    print("   [OK] Log-transformed (log1p)")
-    
+    print("   [OK] log1p")
     return adata
 
 
 def transform_rna_indices(adata: ad.AnnData) -> ad.AnnData:
-    """
-    Transform RNA AnnData indices to match cisTopic barcode format.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        RNA AnnData with original indices
-        
-    Returns
-    -------
-    ad.AnnData
-        AnnData with transformed indices
-    """
     print("\n Transforming RNA barcode indices...")
-    
-    original_indices = adata.obs_names.tolist()
-    
-    # Transform indices
-    transformed_indices = []
-    failed_indices = []
-    
-    for idx in original_indices:
+    original = adata.obs_names.tolist()
+    transformed, failed = [], []
+    for idx in original:
         try:
-            transformed_indices.append(transform_barcode_index(idx))
-        except ValueError as e:
-            failed_indices.append(idx)
-            transformed_indices.append(idx)  # Keep original if transformation fails
-    
-    if failed_indices:
-        print(f"   [WARN] {len(failed_indices)} indices could not be transformed")
-        print(f"      Examples: {failed_indices[:3]}")
-    
-    adata.obs_names = pd.Index(transformed_indices)
-    print(f"   [OK] Transformed {len(transformed_indices)} indices")
-    print(f"      Example: {original_indices[0]} -> {transformed_indices[0]}")
-    
+            transformed.append(transform_barcode_index(idx))
+        except ValueError:
+            failed.append(idx)
+            transformed.append(idx)
+    if failed:
+        print(f"   [WARN] {len(failed)} indices could not be transformed")
+        print(f"      examples: {failed[:3]}")
+    adata.obs_names = pd.Index(transformed)
+    print(f"   [OK] {len(transformed)} indices")
+    print(f"      example: {original[0]} -> {transformed[0]}")
     return adata
 
 
-def remove_duplicates(adata: ad.AnnData, cistopic_obj) -> Tuple[ad.AnnData, object]:
-    """
-    Remove duplicate indices from both RNA and ATAC data.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        RNA AnnData object
-    cistopic_obj : CistopicObject
-        cisTopic object
-        
-    Returns
-    -------
-    Tuple[ad.AnnData, CistopicObject]
-        Objects with duplicates removed
-    """
+def remove_duplicates(adata, cistopic_obj):
     print("\n Removing duplicate indices...")
-    
-    # Check for duplicates in RNA
     rna_dups = adata.obs_names.duplicated()
-    n_rna_dups = rna_dups.sum()
-    if n_rna_dups > 0:
-        print(f"   [WARN] Found {n_rna_dups} duplicate indices in RNA data")
+    if rna_dups.sum():
+        print(f"   [WARN] {rna_dups.sum()} duplicate RNA indices")
         adata = adata[~rna_dups].copy()
-        print(f"   [OK] Removed RNA duplicates: {adata.n_obs} cells remaining")
-    
-    # Check for duplicates in cisTopic
-    cistopic_dups = cistopic_obj.cell_data.index.duplicated()
-    n_cistopic_dups = cistopic_dups.sum()
-    if n_cistopic_dups > 0:
-        print(f"   [WARN] Found {n_cistopic_dups} duplicate indices in cisTopic data")
-        cistopic_obj.cell_data = cistopic_obj.cell_data[~cistopic_dups]
-        print(f"   [OK] Removed cisTopic duplicates: {len(cistopic_obj.cell_data)} cells remaining")
-    
-    if n_rna_dups == 0 and n_cistopic_dups == 0:
-        print("   [OK] No duplicates found")
-    
+    ctx_dups = cistopic_obj.cell_data.index.duplicated()
+    if ctx_dups.sum():
+        print(f"   [WARN] {ctx_dups.sum()} duplicate cisTopic indices")
+        cistopic_obj.cell_data = cistopic_obj.cell_data[~ctx_dups]
+    if not rna_dups.sum() and not ctx_dups.sum():
+        print("   [OK] none found")
     return adata, cistopic_obj
 
 
-def find_matching_cells(adata: ad.AnnData, cistopic_obj) -> Tuple[ad.AnnData, object, set]:
-    """
-    Find cells present in both RNA and ATAC data.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        RNA AnnData object
-    cistopic_obj : CistopicObject
-        cisTopic object
-        
-    Returns
-    -------
-    Tuple[ad.AnnData, CistopicObject, set]
-        Filtered objects and set of shared indices
+def find_matching_cells(adata, cistopic_obj) -> List[str]:
+    """Return SORTED shared indices.
+
+    Sorted, not set-ordered: iterating a set gives an arbitrary (and between-run
+    variable) order, which would make the written cell order non-reproducible
+    even though the RNA/ATAC alignment itself stayed correct.
     """
     print("\n Finding matching cells between RNA and ATAC...")
-    
-    rna_indices = set(adata.obs_names)
-    atac_indices = set(cistopic_obj.cell_data.index)
-    
-    shared_indices = rna_indices.intersection(atac_indices)
-    missing_from_atac = rna_indices - atac_indices
-    missing_from_rna = atac_indices - rna_indices
-    
-    print(f"   [STATS] RNA cells: {len(rna_indices)}")
-    print(f"   [STATS] ATAC cells: {len(atac_indices)}")
-    print(f"   [OK] Shared cells: {len(shared_indices)}")
-    print(f"   [ERROR] In RNA only: {len(missing_from_atac)}")
-    print(f"   [ERROR] In ATAC only: {len(missing_from_rna)}")
-    
-    if len(shared_indices) == 0:
-        raise ValueError("No matching cells found between RNA and ATAC data!")
-    
-    # Show examples of mismatches if any
-    if missing_from_atac:
-        print(f"\n   Examples missing from ATAC: {list(missing_from_atac)[:3]}")
-    if missing_from_rna:
-        print(f"   Examples missing from RNA: {list(missing_from_rna)[:3]}")
-    
-    return shared_indices
+    rna_idx = set(adata.obs_names)
+    atac_idx = set(cistopic_obj.cell_data.index)
+    shared = sorted(rna_idx & atac_idx)
+
+    print(f"   [STATS] RNA cells:    {len(rna_idx)}")
+    print(f"   [STATS] ATAC cells:   {len(atac_idx)}")
+    print(f"   [OK]    shared:       {len(shared)}")
+    print(f"           RNA only:     {len(rna_idx - atac_idx)}")
+    print(f"           ATAC only:    {len(atac_idx - rna_idx)}")
+
+    if len(shared) == 0:
+        raise ValueError(
+            "No matching cells between RNA and ATAC -- barcode format mismatch.\n"
+            f"  RNA example:  {sorted(rna_idx)[:1]}\n"
+            f"  ATAC example: {sorted(atac_idx)[:1]}\n"
+            "  Check transform_barcode_index() and SAMPLE_RENAME.")
+
+    # Per-sample-group breakdown. A global count can look healthy while ONE age
+    # group silently contributes zero (the classic pre_geriatric/pre_ger case).
+    def group_of(x):
+        return x.split("___")[-1].rsplit("_", 1)[0]
+
+    shared_grp = pd.Series([group_of(s) for s in shared]).value_counts()
+    atac_grp = pd.Series([group_of(s) for s in atac_idx]).value_counts()
+    print("\n   shared cells per sample group (shared / ATAC):")
+    for g in sorted(atac_grp.index):
+        s = int(shared_grp.get(g, 0))
+        flag = "   <-- ZERO, check SAMPLE_RENAME" if s == 0 else ""
+        print(f"      {g:16s} {s:7d} / {int(atac_grp[g]):7d}{flag}")
+
+    if len(rna_idx - atac_idx):
+        print(f"\n   examples missing from ATAC: {sorted(rna_idx - atac_idx)[:2]}")
+    if len(atac_idx - rna_idx):
+        print(f"   examples missing from RNA:  {sorted(atac_idx - rna_idx)[:2]}")
+
+    return shared
 
 
-def subset_to_shared_cells(adata: ad.AnnData, cistopic_obj, shared_indices: set) -> Tuple[ad.AnnData, object]:
-    """
-    Subset both RNA and ATAC data to shared cells and ensure alignment.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        RNA AnnData object
-    cistopic_obj : CistopicObject
-        cisTopic object
-    shared_indices : set
-        Set of shared cell indices
-        
-    Returns
-    -------
-    Tuple[ad.AnnData, CistopicObject]
-        Subset and aligned objects
-    """
-    print("\n Subsetting to shared cells and aligning indices...")
-    
-    shared_indices_list = list(shared_indices)
-    
-    # Subset RNA
-    adata = adata[shared_indices_list, :].copy()
-    print(f"   [OK] RNA subset: {adata.n_obs} cells")
-    
-    # Subset cisTopic cell_data
-    cistopic_obj.cell_data = cistopic_obj.cell_data.loc[shared_indices_list]
-    print(f"   [OK] cisTopic subset: {len(cistopic_obj.cell_data)} cells")
-    
-    # Reorder cisTopic to match RNA order
+def subset_to_shared_cells(adata, cistopic_obj, shared: List[str]):
+    print("\n Subsetting to shared cells and aligning...")
+    adata = adata[shared, :].copy()
     cistopic_obj.cell_data = cistopic_obj.cell_data.loc[adata.obs_names]
-    
-    # Verify alignment
     assert list(adata.obs_names) == list(cistopic_obj.cell_data.index), \
         "Index alignment failed!"
-    print("   [OK] Indices aligned and verified")
-    
+    print(f"   [OK] aligned: {adata.n_obs} cells")
     return adata, cistopic_obj
 
 
-def set_categorical_age(adata: ad.AnnData, cistopic_obj, age_order: List[str]) -> Tuple[ad.AnnData, object]:
-    """
-    Set age column as ordered categorical in both objects.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        RNA AnnData object
-    cistopic_obj : CistopicObject
-        cisTopic object
-    age_order : List[str]
-        Desired order of age categories
-        
-    Returns
-    -------
-    Tuple[ad.AnnData, CistopicObject]
-        Objects with categorical age
-    """
+def set_categorical_age(adata, cistopic_obj, age_order: List[str]):
     print("\n Setting age as ordered categorical...")
-    
-    # Set in RNA AnnData
-    if 'age' in adata.obs.columns:
-        # Get unique ages in data
-        unique_ages = set(adata.obs['age'].unique())
-        valid_order = [a for a in age_order if a in unique_ages]
-        
-        adata.obs['age'] = pd.Categorical(
-            adata.obs['age'],
-            categories=valid_order,
-            ordered=True
-        )
-        print(f"   [OK] RNA age categories: {adata.obs['age'].cat.categories.tolist()}")
+    if "age" in adata.obs.columns:
+        valid = [a for a in age_order if a in set(adata.obs["age"].unique())]
+        adata.obs["age"] = pd.Categorical(adata.obs["age"], categories=valid,
+                                          ordered=True)
+        print(f"   [OK] RNA: {valid}")
     else:
-        print("   [WARN] 'age' column not found in RNA data")
-    
-    # Set in cisTopic
-    if 'age' in cistopic_obj.cell_data.columns:
-        unique_ages = set(cistopic_obj.cell_data['age'].unique())
-        valid_order = [a for a in age_order if a in unique_ages]
-        
-        cistopic_obj.cell_data['age'] = pd.Categorical(
-            cistopic_obj.cell_data['age'],
-            categories=valid_order,
-            ordered=True
-        )
-        print(f"   [OK] cisTopic age categories: {cistopic_obj.cell_data['age'].cat.categories.tolist()}")
+        print("   [WARN] 'age' not in RNA .obs")
+
+    if "age" in cistopic_obj.cell_data.columns:
+        valid = [a for a in age_order
+                 if a in set(cistopic_obj.cell_data["age"].unique())]
+        cistopic_obj.cell_data["age"] = pd.Categorical(
+            cistopic_obj.cell_data["age"], categories=valid, ordered=True)
+        print(f"   [OK] cisTopic: {valid}")
     else:
-        print("   [WARN] 'age' column not found in cisTopic data")
-    
+        print("   [WARN] 'age' not in cisTopic cell_data")
     return adata, cistopic_obj
 
 
-def save_outputs(adata: ad.AnnData, cistopic_obj, gex_path: str, cistopic_path: str):
-    """
-    Save processed RNA AnnData and cisTopic objects.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        Processed RNA AnnData object
-    cistopic_obj : CistopicObject
-        Processed cisTopic object
-    gex_path : str
-        Output path for GEX AnnData
-    cistopic_path : str
-        Output path for cisTopic object
-    """
-    print("\n[SAVE] Saving outputs...")
-    
-    # Create output directory if needed
-    output_dir = os.path.dirname(gex_path)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
-        print(f"    Created output directory: {output_dir}")
-    
-    # Save GEX AnnData
-    adata.write(gex_path)
-    print(f"   [OK] Saved GEX AnnData: {gex_path}")
-    
-    # Save cisTopic object
-    with open(cistopic_path, "wb") as f:
+def copy_region_sets(cfg):
+    """SCENIC+ reads the region sets from the input bundle, so copy them in."""
+    if not os.path.isdir(cfg.region_sets_dir):
+        print(f"   [WARN] region_sets not found at {cfg.region_sets_dir}")
+        return
+    dst = os.path.join(cfg.scenicplus_dir, "region_sets")
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(cfg.region_sets_dir, dst)
+    print(f"   [OK] region sets -> {dst}")
+    for sub in sorted(os.listdir(dst)):
+        p = os.path.join(dst, sub)
+        if os.path.isdir(p):
+            n = len([f for f in os.listdir(p) if f.endswith(".bed")])
+            print(f"      {sub:20s} {n} bed")
+
+
+def save_outputs(cfg, adata, cistopic_obj):
+    print("\n[SAVE] Saving SCENIC+ input bundle...")
+    os.makedirs(cfg.scenicplus_dir, exist_ok=True)
+    adata.write(cfg.gex_out)
+    print(f"   [OK] {cfg.gex_out}")
+    with open(cfg.ctx_out, "wb") as f:
         pickle.dump(cistopic_obj, f)
-    print(f"   [OK] Saved cisTopic object: {cistopic_path}")
+    print(f"   [OK] {cfg.ctx_out}")
+    copy_region_sets(cfg)
 
 
-def print_final_summary(adata: ad.AnnData, cistopic_obj):
-    """Print final summary of processed data."""
-    print("\n" + "="*60)
-    print("[STATS] FINAL SUMMARY")
-    print("="*60)
-    
-    print(f"\n GEX AnnData:")
-    print(f"   Cells: {adata.n_obs}")
-    print(f"   Genes: {adata.n_vars}")
-    print(f"   Obs columns: {adata.obs.columns.tolist()}")
-    if 'age' in adata.obs.columns:
-        print(f"   Age distribution:")
-        for age, count in adata.obs['age'].value_counts().items():
+def print_final_summary(cfg, adata, cistopic_obj):
+    print("\n" + "=" * 60)
+    print(f"[STATS] FINAL SUMMARY — {cfg.name}")
+    print("=" * 60)
+    print(f"\n GEX AnnData: {adata.n_obs} cells x {adata.n_vars} genes")
+    print(f"   obs columns: {adata.obs.columns.tolist()}")
+    if "age" in adata.obs.columns:
+        print("   age distribution:")
+        for age, count in adata.obs["age"].value_counts().sort_index().items():
             print(f"      {age}: {count}")
-    
-    print(f"\n cisTopic Object:")
-    print(f"   Cells: {len(cistopic_obj.cell_data)}")
-    if hasattr(cistopic_obj, 'region_names'):
-        print(f"   Regions: {len(cistopic_obj.region_names)}")
-    if hasattr(cistopic_obj, 'selected_model') and cistopic_obj.selected_model is not None:
-        print(f"   Topics: {cistopic_obj.selected_model.n_topic}")
-    print(f"   Cell data columns: {cistopic_obj.cell_data.columns.tolist()}")
-    
-    # Verify alignment
-    print(f"\n[OK] Index alignment verified: {list(adata.obs_names[:3])} ...")
+    print(f"\n cisTopic: {len(cistopic_obj.cell_data)} cells")
+    if hasattr(cistopic_obj, "region_names"):
+        print(f"   regions: {len(cistopic_obj.region_names)}")
+    if getattr(cistopic_obj, "selected_model", None) is not None:
+        print(f"   topics: {model_topic_count(cistopic_obj.selected_model)}")
+    print(f"   cell_data columns: {cistopic_obj.cell_data.columns.tolist()}")
+    print(f"\n[OK] aligned index example: {list(adata.obs_names[:2])}")
 
 
 # =============================================================================
-# MAIN PIPELINE
+# PER-COMPARTMENT DRIVER
 # =============================================================================
 
-def main(
-    rna_path: str = RNA_ANNDATA_PATH,
-    cistopic_path: str = CISTOPIC_OBJ_PATH,
-    cell_type: Optional[str] = CELL_TYPE_FILTER,
-    output_gex: str = OUTPUT_GEX_PATH,
-    output_cistopic: str = OUTPUT_CISTOPIC_PATH,
-    age_order: List[str] = DESIRED_AGE_ORDER
-):
-    """
-    Run the complete RNA-ATAC integration preparation pipeline.
-    
-    Parameters
-    ----------
-    rna_path : str
-        Path to input RNA AnnData (.h5ad)
-    cistopic_path : str
-        Path to input cisTopic object (.pkl)
-    cell_type : str, optional
-        Cell type to filter for (None for all cells)
-    output_gex : str
-        Output path for processed GEX AnnData
-    output_cistopic : str
-        Output path for processed cisTopic object
-    age_order : List[str]
-        Desired order of age categories
-    """
-    print("\n" + "="*60)
-    print("RNA-ATAC INTEGRATION PREPARATION FOR SCENIC+")
-    print("="*60)
-    
-    # Step 1: Load RNA data
-    print("\n" + "-"*40)
-    print("STEP 1: Load RNA Data")
-    print("-"*40)
-    adata = load_rna_anndata(rna_path, cell_type=cell_type)
-    
-    # Step 2: Preprocess RNA
-    print("\n" + "-"*40)
-    print("STEP 2: Preprocess RNA")
-    print("-"*40)
+def run_compartment(cfg: Cfg, dry_run: bool = False):
+    print("\n" + "#" * 70)
+    print(f"#  COMPARTMENT: {cfg.name}  ->  {cfg.scenicplus_dir}")
+    print("#" * 70)
+
+    if not os.path.exists(cfg.rna_h5ad):
+        raise FileNotFoundError(f"[ERROR] RNA object not found: {cfg.rna_h5ad}")
+
+    adata = load_rna_anndata(cfg.rna_h5ad, celltype_col=cfg.celltype_col,
+                             cell_type=cfg.cell_type_filter)
     adata = preprocess_rna(adata, target_sum=TARGET_SUM)
-    
-    # Step 3: Transform RNA indices
-    print("\n" + "-"*40)
-    print("STEP 3: Transform RNA Indices")
-    print("-"*40)
     adata = transform_rna_indices(adata)
-    
-    # Step 4: Load cisTopic object
-    print("\n" + "-"*40)
-    print("STEP 4: Load cisTopic Object")
-    print("-"*40)
-    cistopic_obj = load_cistopic_object(cistopic_path)
-    
-    # Step 5: Remove duplicates
-    print("\n" + "-"*40)
-    print("STEP 5: Remove Duplicates")
-    print("-"*40)
+
+    cistopic_obj = load_cistopic_object(cfg.cistopic_pkl)
     adata, cistopic_obj = remove_duplicates(adata, cistopic_obj)
-    
-    # Step 6: Find matching cells
-    print("\n" + "-"*40)
-    print("STEP 6: Find Matching Cells")
-    print("-"*40)
-    shared_indices = find_matching_cells(adata, cistopic_obj)
-    
-    # Step 7: Subset to shared cells
-    print("\n" + "-"*40)
-    print("STEP 7: Subset to Shared Cells")
-    print("-"*40)
-    adata, cistopic_obj = subset_to_shared_cells(adata, cistopic_obj, shared_indices)
-    
-    # Step 8: Set categorical age
-    print("\n" + "-"*40)
-    print("STEP 8: Set Categorical Age")
-    print("-"*40)
-    adata, cistopic_obj = set_categorical_age(adata, cistopic_obj, age_order)
-    
-    # Step 9: Save outputs
-    print("\n" + "-"*40)
-    print("STEP 9: Save Outputs")
-    print("-"*40)
-    save_outputs(adata, cistopic_obj, output_gex, output_cistopic)
-    
-    # Print summary
-    print_final_summary(adata, cistopic_obj)
-    
-    print("\n" + "="*60)
-    print("[OK] PIPELINE COMPLETED SUCCESSFULLY")
-    print("="*60)
-    
+
+    shared = find_matching_cells(adata, cistopic_obj)
+
+    if dry_run:
+        print("\n[DRY RUN] overlap reported; nothing written.")
+        return None, None
+
+    adata, cistopic_obj = subset_to_shared_cells(adata, cistopic_obj, shared)
+    adata, cistopic_obj = set_categorical_age(adata, cistopic_obj, DESIRED_AGE_ORDER)
+    save_outputs(cfg, adata, cistopic_obj)
+    print_final_summary(cfg, adata, cistopic_obj)
     return adata, cistopic_obj
 
 
 # =============================================================================
-# ENTRY POINT
+# MAIN
 # =============================================================================
+
+def main():
+    p = argparse.ArgumentParser(
+        description="Prepare RNA + ATAC data for SCENIC+ (all compartments)")
+    p.add_argument("--run", nargs="+", default=None, choices=sorted(COMPARTMENTS),
+                   help="Which compartments to prepare (default: all)")
+    p.add_argument("--rna", type=str, default=None,
+                   help="Override the RNA .h5ad (single compartment only)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Report RNA/ATAC overlap and exit without writing")
+    p.add_argument("--stop-on-error", action="store_true",
+                   help="Abort on first failure (default: continue)")
+    args = p.parse_args()
+
+    names = args.run or list(COMPARTMENTS)
+    if args.rna and len(names) > 1:
+        p.error("--rna applies to a single compartment; "
+                "set rna_h5ad in COMPARTMENTS for multi-compartment runs")
+
+    print("\n" + "=" * 60)
+    print("RNA-ATAC INTEGRATION PREPARATION FOR SCENIC+")
+    print(f"Compartments: {names}")
+    print("=" * 60)
+
+    results = {}
+    for name in names:
+        try:
+            run_compartment(Cfg(name, COMPARTMENTS[name], rna_override=args.rna),
+                            dry_run=args.dry_run)
+            results[name] = "OK"
+        except Exception as e:
+            print(f"\n[ERROR] {name} failed: {e}")
+            traceback.print_exc()
+            if args.stop_on_error:
+                raise
+            print("[INFO] Continuing to next compartment...\n")
+            results[name] = "FAILED"
+
+    print("\n" + "=" * 60)
+    print("STEP 4 FINISHED")
+    for k, v in results.items():
+        print(f"   {k}: {v}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description='Prepare RNA and ATAC data for SCENIC+ integration'
-    )
-    parser.add_argument('--rna', type=str, default=RNA_ANNDATA_PATH,
-                        help='Path to RNA AnnData (.h5ad)')
-    parser.add_argument('--atac', type=str, default=CISTOPIC_OBJ_PATH,
-                        help='Path to cisTopic object (.pkl)')
-    parser.add_argument('--celltype', type=str, default=CELL_TYPE_FILTER,
-                        help='Cell type to filter (use "all" for no filter)')
-    parser.add_argument('--output-dir', type=str, default=OUTPUT_DIR,
-                        help='Output directory')
-    parser.add_argument('--output-prefix', type=str, default='',
-                        help='Prefix for output files')
-    
-    args = parser.parse_args()
-    
-    # Handle cell type argument
-    cell_type = None if args.celltype.lower() == 'all' else args.celltype
-    
-    # Set output paths
-    prefix = f"{args.output_prefix}_" if args.output_prefix else ""
-    output_gex = os.path.join(args.output_dir, f"{prefix}GEX_anndata.h5ad")
-    output_cistopic = os.path.join(args.output_dir, f"{prefix}cisTopic_obj.pkl")
-    
-    # Run pipeline
-    adata, cistopic_obj = main(
-        rna_path=args.rna,
-        cistopic_path=args.atac,
-        cell_type=cell_type,
-        output_gex=output_gex,
-        output_cistopic=output_cistopic
-    )
+    main()
