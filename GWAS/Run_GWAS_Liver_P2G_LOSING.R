@@ -597,10 +597,10 @@ write_log(paste("Completed:", nrow(scavenge_summary), "| Remaining:", nrow(remai
 if (nrow(remaining) > 0) {
   start_time <- Sys.time()
   for (i in 1:nrow(remaining)) {
-    trait <- remaining$trait[i]
-    bed_file <- trait_bed_files[[trait]]
-    trait_info <- trait_counts[trait == trait]
-    n_regions <- if (nrow(trait_info) > 0) trait_info$n_regions[1] else 0
+    this_trait <- remaining$trait[i]
+    bed_file   <- trait_bed_files[[this_trait]]
+    trait_info <- trait_counts[trait == this_trait]
+    n_regions  <- if (nrow(trait_info) > 0) trait_info$n_regions[1] else 0
     write_log(paste0("\n[", i, "/", nrow(remaining), "] ", trait))
 
     run_result <- tryCatch(Run_SCAVENGE_p2g(SE_gc, SE_bg, bed_file, SCAVENGE_CORES, MIN_SEED_CELLS, MIN_VALID_CELLS),
