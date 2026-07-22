@@ -1,44 +1,46 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Compartment downstream analysis — liver aging multiome (RNA modality).
+Multi-compartment downstream analysis — liver aging multiome (RNA modality).
 
-Runs, for a single annotated compartment subset:
-  1. Per-subcluster differential expression (Wilcoxon) -> one CSV per subcluster
-  2. Per-subcluster expression stats (pct expressed + mean expression) -> TSV
-  3. ATAC label export (rna_barcode -> subcluster) for ArchR transfer -> CSV
-  4. Composition vs. age/sex (% of all liver cells), counts + % + per-sex ANOVA
-     -> multi-block .xlsx + CSVs, and a subcluster x age boxplot faceted by sex
+One script for every annotated compartment. For each, it runs:
+  1. Marker dot plot (variance-scaled) supporting the annotation      -> PDF
+  2. Per-subcluster differential expression (Wilcoxon)                -> CSV per subcluster
+  3. Per-subcluster expression stats (pct expressed + mean expression)-> TSV
+  4. ATAC label export (rna_barcode -> subcluster) for ArchR transfer -> CSV
+  5. Composition vs. age/sex (% of ALL liver cells): counts + % +
+     per-sex ANOVA (BH across subclusters)          -> multi-block .xlsx + CSVs
+     plus a subcluster x age boxplot faceted by sex -> PDF
 
-Inputs
-------
-  --subset   annotated compartment .h5ad  (obs[group_col] = subcluster labels;
-             obs_names = RNA barcodes e.g. 'AAACAGCCAAACCCTA-geriatric_5')
-  --parent   full liver atlas .h5ad, used ONLY as the composition denominator
-             (all liver cells per sample). Required for step 4.
+The full liver atlas is loaded ONCE and reused as the composition denominator
+for every compartment, so all panels sit on a common baseline.
 
-The subset object is expected to carry:
-  .X                 log-normalized expression (used for DE + expression stats)
+Pairs with the R scripts (compartment_marker_bubbles.R, browser tracks, module
+scores): `prefix` here determines the filenames they read, so the `prefix` and
+`labels` in COMPARTMENTS below must match their configs exactly.
+
+Label vocabulary
+----------------
+`labels` are the VERBATIM subcluster names as stored in obs (e.g. "Kupffer
+cycling", "LSEC-like", "MV portal"). They are used verbatim in every table,
+plot axis, and the ATAC label CSV. ONLY the per-subcluster DE filenames are
+sanitized (space/hyphen -> underscore) via safe_name(), which the R side
+reproduces with its sanitize().
+
+Each subset object is expected to carry:
+  .X                 log-normalized expression (DE + expression stats)
   .obs[group_col]    subcluster annotation (categorical)
   .obs[sample_key]   per-sample id
-  .obs['age']        age group  (young / mid_age / old / pre_geriatric / geriatric)
+  .obs['age']        young / mid_age / old / pre_geriatric / geriatric
   .obs['sex']        'male' / 'female'
-
-Subcluster labels are used VERBATIM in table/plot/label outputs; only the DE
-filenames are sanitized (space/hyphen -> underscore) so they glob cleanly.
 
 Usage
 -----
-    python compartment_downstream.py \
-        --subset  Kupffer.h5ad \
-        --parent  liver_atlas.h5ad \
-        --group-col celltype_sub \
-        --outdir  results/Kupffer \
-        --prefix  Kupffer \
-        --order "Kupffer" "Kupffer cycling" "LAM" "LSEC-like"
+    python compartment_downstream.py --parent liver_atlas.h5ad
+    python compartment_downstream.py --parent liver_atlas.h5ad --run Kupffer T_ILC
+    python compartment_downstream.py --run myeloid --skip-composition
 
-Omit --order to use the object's stored categorical order. Steps can be
-toggled with --skip-de / --skip-expr / --skip-labels / --skip-composition.
+Edit COMPARTMENTS below to point at your .h5ad paths / output dirs.
 
 Citation
 --------
@@ -58,7 +60,7 @@ import scanpy as sc
 
 
 # --------------------------------------------------------------------------- #
-# Constants (dataset conventions)
+# Dataset conventions
 # --------------------------------------------------------------------------- #
 AGE_GROUPS = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
 SEX_ORDER = ["female", "male"]
@@ -68,6 +70,89 @@ AGE_PALETTE = {"young": "#1ABC9C", "mid_age": "#F1C40F", "old": "#C39BD3",
                "pre_geriatric": "#2980B9", "geriatric": "#E84393"}
 # alphabetical age order for the pooled counts table rows (matches paper layout)
 AGE_ALPHA = ["geriatric", "mid_age", "old", "pre_geriatric", "young"]
+SAMPLE_KEY = "sample"
+
+
+# --------------------------------------------------------------------------- #
+# Per-compartment registry
+#   h5ad      : annotated compartment subset
+#   group_col : obs column holding the subcluster labels
+#   labels    : VERBATIM labels, in publication order
+#   markers   : dot plot panel, one entry per population
+#   outdir    : where all outputs for this compartment are written
+#   prefix    : filename prefix (must match the R scripts' `prefix`)
+# --------------------------------------------------------------------------- #
+COMPARTMENTS = {
+
+    "myeloid": dict(
+        h5ad="myeloid.h5ad",
+        group_col="celltype_myeloid",
+        outdir="/data/sarkern2/multiome_liver/myeloid_DE_csvs",
+        prefix="myeloid",
+        labels=["Kupffer", "Kupffer cycling", "LAM", "MoMF",
+                "cDC1", "pDC", "Neutrophil"],
+        markers={
+            "Kupffer":         ["Clec4f", "Vsig4", "Timd4", "Cd5l", "Marco", "C1qa"],
+            "Kupffer cycling": ["Mki67", "Top2a", "Cenpf"],
+            "LAM":             ["Gpnmb", "Trem2", "Cd9", "Arhgap22", "Sirpb1a",
+                                "Cd74", "Pparg"],
+            "MoMF":            ["Ccr2", "Cx3cr1", "Ly6c2", "Chil3", "Plac8", "Fn1"],
+            "cDC1":            ["Xcr1", "Clec9a", "Batf3", "Cadm1"],
+            "pDC":             ["Siglech", "Bst2", "Il3ra", "Tcf4"],
+            "Neutrophil":      ["S100a8", "S100a9", "Retnlg", "Csf3r"],
+        },
+    ),
+
+    "Kupffer": dict(
+        h5ad="Kupffer.h5ad",
+        group_col="celltype_sub",
+        outdir="/data/sarkern2/multiome_liver/Kupffer_DE_csvs",
+        prefix="Kupffer",
+        labels=["Kupffer", "Kupffer cycling", "LAM", "LSEC-like"],
+        markers={
+            "Kupffer":         ["Clec4f", "Vsig4", "Timd4", "Cd5l", "Marco", "C1qa"],
+            "Kupffer cycling": ["Mki67", "Top2a", "Cenpf"],
+            "LAM":             ["Gpnmb", "Trem2", "Cd9", "Arhgap22", "Sirpb1a",
+                                "Cd74", "Pparg"],
+            "LSEC-like":       ["Stab2", "Clec4g", "Dnase1l3", "Oit3", "Kdr",
+                                "Gata4", "Ptprb", "Pecam1"],
+        },
+    ),
+
+    "endothelial_Kupffer02": dict(
+        h5ad="endothelial_Kupffer02.h5ad",
+        group_col="endo_subcluster",
+        outdir="/data/sarkern2/multiome_liver/endo_DE_csvs",
+        prefix="endothelial_Kupffer02",
+        labels=["LSEC", "LSEC cycling", "MV portal", "MV central", "Kupffer-like"],
+        markers={
+            "LSEC":         ["Stab2", "Clec4g", "Gata4", "Oit3", "Dnase1l3", "Mrc1"],
+            "LSEC cycling": ["Mki67", "Top2a", "Cenpf"],
+            "MV portal":    ["Vwf", "Sox17", "Efnb2"],
+            "MV central":   ["Rspo3", "Wnt9b", "Wnt2", "Thbd"],
+            "Kupffer-like": ["Clec4f", "Vsig4", "Timd4", "Cd5l", "C1qa",
+                             "Marco", "Csf1r"],
+        },
+    ),
+
+    "T_ILC": dict(
+        h5ad="T_ILC.h5ad",
+        group_col="celltype_T",
+        outdir="/data/sarkern2/multiome_liver/T_DE_csvs",
+        prefix="T_ILC",
+        labels=["CD4T", "Treg", "CD8T", "gdT", "iNKT", "NK", "ILC1", "neutrophil"],
+        markers={
+            "CD4T":       ["Cd3e", "Cd4"],
+            "Treg":       ["Foxp3", "Ikzf2"],
+            "CD8T":       ["Cd8a", "Cd8b1", "Gzmk"],
+            "gdT":        ["Trdc"],
+            "iNKT":       ["Zbtb16"],
+            "NK":         ["Ncr1", "Klrb1c", "Gzmb"],
+            "ILC1":       ["Tbx21", "Eomes"],
+            "neutrophil": ["S100a8", "S100a9", "Retnlg"],
+        },
+    ),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -75,32 +160,22 @@ AGE_ALPHA = ["geriatric", "mid_age", "old", "pre_geriatric", "young"]
 # --------------------------------------------------------------------------- #
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
-        description="Downstream DE + expression + label export + composition "
-                    "for one annotated compartment subset.",
+        description="Multi-compartment downstream: dot plot + DE + expression "
+                    "stats + ATAC label export + composition.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--subset", required=True,
-                   help="Annotated compartment .h5ad (subcluster labels in obs).")
     p.add_argument("--parent", default=None,
                    help="Full liver atlas .h5ad (composition denominator). "
                         "Required unless --skip-composition.")
-    p.add_argument("--group-col", default="celltype_sub",
-                   help="obs column holding subcluster labels.")
-    p.add_argument("--sample-key", default="sample",
+    p.add_argument("--run", nargs="+", default=None, choices=sorted(COMPARTMENTS),
+                   help="Which compartments to run (default: all).")
+    p.add_argument("--sample-key", default=SAMPLE_KEY,
                    help="obs column holding per-sample id.")
-    p.add_argument("--outdir", required=True, help="Output directory.")
-    p.add_argument("--prefix", default=None,
-                   help="Filename prefix for outputs (default: --group-col).")
-    p.add_argument("--order", nargs="+", default=None,
-                   help="Explicit subcluster order (verbatim labels). "
-                        "Default: object's stored categorical order.")
-
-    # step toggles
-    p.add_argument("--skip-de", action="store_true", help="Skip Wilcoxon DE.")
-    p.add_argument("--skip-expr", action="store_true", help="Skip expression stats.")
-    p.add_argument("--skip-labels", action="store_true", help="Skip ATAC label export.")
-    p.add_argument("--skip-composition", action="store_true",
-                   help="Skip composition table + boxplot (needs --parent).")
+    p.add_argument("--skip-dotplot", action="store_true")
+    p.add_argument("--skip-de", action="store_true")
+    p.add_argument("--skip-expr", action="store_true")
+    p.add_argument("--skip-labels", action="store_true")
+    p.add_argument("--skip-composition", action="store_true")
     return p.parse_args(argv)
 
 
@@ -118,50 +193,63 @@ def log_versions():
     print("===================")
 
 
-def resolve_order(adata, group_col, order):
-    """Return the subcluster order, validating against the object's labels."""
-    col = adata.obs[group_col]
-    stored = list(col.cat.categories) if hasattr(col, "cat") \
-        else sorted(col.dropna().unique())
-    if order is None:
-        return stored
-    missing = set(order) - set(stored)
-    extra = set(stored) - set(order)
-    if missing or extra:
-        raise ValueError(
-            f"--order mismatch. object has {sorted(stored)}, "
-            f"--order has {sorted(order)} (missing={sorted(missing)}, "
-            f"extra={sorted(extra)})"
-        )
-    return list(order)
-
-
 def safe_name(label):
-    """Filename-safe version of a subcluster label (label itself unchanged)."""
+    """Filename-safe label (the label itself is never changed)."""
     return label.replace(" ", "_").replace("-", "_")
+
+
+def prepare_subset(sub, group_col, labels):
+    """Validate labels against the object and fix the categorical order."""
+    col = sub.obs[group_col]
+    present = set(col.dropna().unique())
+    if present != set(labels):
+        raise ValueError(
+            f"label mismatch in {group_col!r}: object has {sorted(present)}, "
+            f"config has {sorted(labels)}"
+        )
+    sub.obs[group_col] = pd.Categorical(col, categories=labels, ordered=True)
+    sub.obs["age"] = pd.Categorical(sub.obs["age"], AGE_GROUPS, ordered=True)
+    return sub
 
 
 # --------------------------------------------------------------------------- #
 # Steps
 # --------------------------------------------------------------------------- #
-def run_de(adata, group_col, order, outdir, prefix):
+def run_dotplot(sub, cfg):
+    """Variance-scaled marker dot plot supporting the annotation."""
+    import matplotlib.pyplot as plt
+    present = {k: [g for g in v if g in sub.var_names] for k, v in cfg["markers"].items()}
+    dropped = {g for v in cfg["markers"].values() for g in v} - set(sub.var_names)
+    if dropped:
+        print("  dropped (not in var_names):", ", ".join(sorted(dropped)))
+    present = {k: v for k, v in present.items() if v}
+    sc.pl.dotplot(sub, present, groupby=cfg["group_col"],
+                  standard_scale="var", dendrogram=False, show=False)
+    fn = os.path.join(cfg["outdir"], f"{cfg['prefix']}_RNA_dotplot_stdscale.pdf")
+    plt.savefig(fn, bbox_inches="tight")
+    plt.close("all")
+    print(f"  saved {os.path.basename(fn)}")
+
+
+def run_de(sub, cfg):
     """Per-subcluster Wilcoxon DE, one CSV per subcluster (Seurat-style cols)."""
-    sc.tl.rank_genes_groups(adata, groupby=group_col, method="wilcoxon", pts=True)
-    for grp in order:
-        df = sc.get.rank_genes_groups_df(adata, group=grp, key="rank_genes_groups")
+    sc.tl.rank_genes_groups(sub, groupby=cfg["group_col"], method="wilcoxon", pts=True)
+    for grp in cfg["labels"]:
+        df = sc.get.rank_genes_groups_df(sub, group=grp, key="rank_genes_groups")
         df = df.rename(columns={"names": "gene", "logfoldchanges": "avg_log2FC",
                                 "pvals_adj": "p_val_adj", "pvals": "p_val",
                                 "scores": "score"}).set_index("gene")
-        fn = os.path.join(outdir, f"{prefix}_DE_Cluster_{safe_name(grp)}.csv")
+        fn = os.path.join(cfg["outdir"],
+                          f"{cfg['prefix']}_DE_Cluster_{safe_name(grp)}.csv")
         df.to_csv(fn)
         print(f"  saved {os.path.basename(fn)}  ({df.shape[0]} genes)")
 
 
-def run_expr_stats(adata, group_col, outdir, prefix):
+def run_expr_stats(sub, cfg):
     """Per-subcluster pct-expressed and mean-expression, long format TSV."""
-    X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
-    expr = pd.DataFrame(X, columns=adata.var_names, index=adata.obs_names)
-    grp = adata.obs[group_col]
+    X = sub.X.toarray() if hasattr(sub.X, "toarray") else np.asarray(sub.X)
+    expr = pd.DataFrame(X, columns=sub.var_names, index=sub.obs_names)
+    grp = sub.obs[cfg["group_col"]]
     pct = expr.gt(0).groupby(grp, observed=True).mean().T * 100
     mean = expr.groupby(grp, observed=True).mean().T
     pct_long = (pct.reset_index()
@@ -171,24 +259,23 @@ def run_expr_stats(adata, group_col, outdir, prefix):
                  .melt(id_vars="index", var_name="celltype", value_name="avg_expression")
                  .rename(columns={"index": "gene"}))
     stats = pct_long.merge(mean_long, on=["gene", "celltype"])
-    fn = os.path.join(outdir, f"{prefix}_expr_stats.tsv")
+    fn = os.path.join(cfg["outdir"], f"{cfg['prefix']}_expr_stats.tsv")
     stats.to_csv(fn, sep="\t", index=False)
     print(f"  saved {os.path.basename(fn)}  {stats.shape}")
 
 
-def run_label_export(adata, group_col, outdir, prefix):
+def run_label_export(sub, cfg):
     """Export rna_barcode -> subcluster label (verbatim) for ArchR transfer."""
-    lab = pd.DataFrame({
-        "rna_barcode": adata.obs_names,
-        group_col: adata.obs[group_col].astype(str).values,
-    })
-    fn = os.path.join(outdir, f"{prefix}_sub_labels.csv")
+    gc = cfg["group_col"]
+    lab = pd.DataFrame({"rna_barcode": sub.obs_names,
+                        gc: sub.obs[gc].astype(str).values})
+    fn = os.path.join(cfg["outdir"], f"{cfg['prefix']}_sub_labels.csv")
     lab.to_csv(fn, index=False)
     print(f"  saved {os.path.basename(fn)}  ({lab.shape[0]} cells)")
-    print(lab[group_col].value_counts().to_string())
+    print(lab[gc].value_counts().to_string())
 
 
-def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
+def run_composition(sub, parent, cfg, sample_key):
     """% of ALL liver cells per sample; counts + % + per-sex ANOVA; boxplot."""
     import matplotlib
     matplotlib.use("Agg")
@@ -196,6 +283,9 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
     from scipy.stats import f_oneway
     from statsmodels.stats.multitest import multipletests
     plt.rcParams["font.family"] = "Arial"
+
+    group_col, order = cfg["group_col"], cfg["labels"]
+    outdir, prefix = cfg["outdir"], cfg["prefix"]
 
     # denominator: all liver cells per sample (parent)
     total = parent.obs.groupby(sample_key, observed=True).size().rename("total")
@@ -209,7 +299,6 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
             .set_index(sample_key).reindex(total.index))
     cwm = counts.join(meta)
 
-    # per-sample % -> feeds ANOVA and boxplot
     pct = (100 * counts.div(total, axis=0)).join(meta)
     pct["age"] = pd.Categorical(pct["age"], AGE_GROUPS, ordered=True)
 
@@ -245,7 +334,7 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
                               "pval": P[ct], "padj": padj.get(ct, np.nan)})
     stats = pd.DataFrame(stat_rows)
 
-    # --- write xlsx (3 side-by-side blocks) + CSVs ---
+    # --- xlsx (3 side-by-side blocks) + CSVs ---
     counts_out = counts_tbl.reset_index().rename(columns={"index": "sample group"})
     xlsx = os.path.join(outdir, f"{prefix}_subcluster_composition.xlsx")
     with pd.ExcelWriter(xlsx, engine="openpyxl") as xl:
@@ -277,7 +366,8 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
     stars = lambda q: ("***" if q < 1e-3 else "**" if q < 1e-2
                        else "*" if q < 5e-2 else "n.s.")
     n_age = len(AGE_GROUPS)
-    fig, axes = plt.subplots(1, len(SEX_ORDER), figsize=(4 * len(SEX_ORDER), 3.5))
+    width = max(4, 0.55 * len(order) + 2)
+    fig, axes = plt.subplots(1, len(SEX_ORDER), figsize=(width * len(SEX_ORDER), 3.5))
     for ax, sx in zip(np.atleast_1d(axes), SEX_ORDER):
         s = comp[comp.sex == sx]
         pv = {}
@@ -318,10 +408,8 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
     plt.close(fig)
     print(f"  saved {os.path.basename(pdf)}")
 
-    # sanity
     pooled = int(counts_tbl.loc["total cell count", "total cell count"])
-    print(f"  parent cells: {parent.n_obs} | subset cells: {sub.n_obs} | "
-          f"pooled denominator: {pooled}"
+    print(f"  parent: {parent.n_obs} | subset: {sub.n_obs} | pooled denominator: {pooled}"
           + ("  OK" if pooled == parent.n_obs else "  <-- MISMATCH, check sample ids"))
 
 
@@ -330,37 +418,51 @@ def run_composition(sub, parent, group_col, sample_key, order, outdir, prefix):
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     args = parse_args(argv)
-    prefix = args.prefix or args.group_col
-    os.makedirs(args.outdir, exist_ok=True)
+    to_run = args.run or list(COMPARTMENTS)
     log_versions()
 
-    print(f"loading subset: {args.subset}")
-    sub = sc.read_h5ad(args.subset)
-    if args.group_col not in sub.obs:
-        raise KeyError(f"{args.group_col!r} not in subset .obs "
-                       f"(have: {list(sub.obs.columns)})")
-    order = resolve_order(sub, args.group_col, args.order)
-    print(f"subcluster order: {order}")
-
-    if not args.skip_de:
-        print("[1/4] differential expression")
-        run_de(sub, args.group_col, order, args.outdir, prefix)
-    if not args.skip_expr:
-        print("[2/4] expression stats")
-        run_expr_stats(sub, args.group_col, args.outdir, prefix)
-    if not args.skip_labels:
-        print("[3/4] ATAC label export")
-        run_label_export(sub, args.group_col, args.outdir, prefix)
+    # parent atlas loaded ONCE, shared across every compartment
+    parent = None
     if not args.skip_composition:
         if args.parent is None:
-            raise ValueError("--parent is required for composition "
-                             "(or pass --skip-composition).")
-        print("[4/4] composition + boxplot")
+            raise ValueError("--parent is required (or pass --skip-composition).")
+        print(f"loading parent atlas: {args.parent}")
         parent = sc.read_h5ad(args.parent)
-        run_composition(sub, parent, args.group_col, args.sample_key,
-                        order, args.outdir, prefix)
+        print(f"  {parent.n_obs} cells, "
+              f"{parent.obs[args.sample_key].nunique()} samples")
 
-    print("done.")
+    for name in to_run:
+        cfg = COMPARTMENTS[name]
+        print(f"\n===== {name} =====")
+        os.makedirs(cfg["outdir"], exist_ok=True)
+
+        sub = sc.read_h5ad(cfg["h5ad"])
+        if cfg["group_col"] not in sub.obs:
+            raise KeyError(f"{cfg['group_col']!r} not in {cfg['h5ad']} .obs "
+                           f"(have: {list(sub.obs.columns)})")
+        sub = prepare_subset(sub, cfg["group_col"], cfg["labels"])
+        print(f"loaded {cfg['h5ad']}: {sub.n_obs} cells, "
+              f"{len(cfg['labels'])} subclusters")
+
+        if not args.skip_dotplot:
+            print("[1/5] marker dot plot")
+            run_dotplot(sub, cfg)
+        if not args.skip_de:
+            print("[2/5] differential expression")
+            run_de(sub, cfg)
+        if not args.skip_expr:
+            print("[3/5] expression stats")
+            run_expr_stats(sub, cfg)
+        if not args.skip_labels:
+            print("[4/5] ATAC label export")
+            run_label_export(sub, cfg)
+        if not args.skip_composition:
+            print("[5/5] composition + boxplot")
+            run_composition(sub, parent, cfg, args.sample_key)
+
+        del sub   # free memory before the next compartment
+
+    print("\ndone.")
 
 
 if __name__ == "__main__":
