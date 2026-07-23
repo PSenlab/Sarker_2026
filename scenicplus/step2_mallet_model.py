@@ -61,7 +61,7 @@ JVM_MEMORY = "500g"
 
 # Default topic grid. Compartments (10k-36k cells) rarely need >100 topics;
 # the grid is kept wide so the Step 3 metric curves show a clear crossover.
-DEFAULT_N_TOPICS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100]
+DEFAULT_N_TOPICS = [25, 50, 75, 100, 200, 300, 350, 400]
 
 # run_cgs_models_mallet already saves into save_path. Leave False so models are
 # written once. Set True only if your pycisTopic version does NOT auto-save.
