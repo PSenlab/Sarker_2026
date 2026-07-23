@@ -14,7 +14,6 @@ library(dplyr)
 library(stringr)
 library(ggalluvial)
 library(ggplot2)
-library(lmerTest)
 
 # ---- config -----------------------------------------------------------------
 IN_RDS     <- "seurat_with_entropy_merged_rep.rds"
@@ -23,9 +22,8 @@ PLOIDY_CSV <- file.path(WORK, "aggregate", "ploidy_annotated_percell_CLEAN.csv")
 
 AGE_LEVELS <- c("young", "mid_age", "old", "pre_geriatric", "geriatric")
 
-
 SEX_PAL <- c(female = "#fb9a99", male = "#89d9e1")
-ENT_PAL <- c("E-Low" = "#9a7fc4", "E-Mid" = "#6ba585", "E-High" = "#1d5138")
+ENT_PAL <- c("E-Low" = "#d9e8de", "E-Mid" = "#6ba585", "E-High" = "#1d5138")
 
 # ---- 1. load and subset to hepatocytes --------------------------------------
 seu <- readRDS(IN_RDS)
@@ -49,24 +47,8 @@ hep$ploidy_call <- ploidy$ploidy_call[idx]
 hep$nFrags      <- ploidy$nFrags[idx]
 hep$has_ploidy  <- !is.na(hep$ploidy_call)
 
-# ---- 3. dropout diagnostics -------------------------------------------------
-# is the ~10% of hepatocytes without a ploidy call uniform across groups?
-hep@meta.data %>%
-  group_by(age, sex) %>%
-  summarise(pct_matched = round(100 * mean(has_ploidy), 1), n = n(),
-            .groups = "drop") %>%
-  arrange(factor(age, levels = AGE_LEVELS), sex) %>%
-  print(n = 20)
-
-# do unmatched cells differ technically?
-hep@meta.data %>%
-  group_by(has_ploidy) %>%
-  summarise(nFeature    = mean(nFeature_RNA),
-            nCount_ATAC = mean(nCount_ATAC, na.rm = TRUE),
-            entropy     = mean(entropy_score),
-            n = n())
-
-# entropy / depth by ploidy class
+# ---- 3. diagnostics ---------------------------------------------------------
+# entropy and sequencing depth by ploidy class
 hep@meta.data %>%
   filter(has_ploidy) %>%
   group_by(ploidy_call) %>%
@@ -75,26 +57,15 @@ hep@meta.data %>%
             mean_entropy  = mean(entropy_score),
             n = n())
 
-# ---- 4. does the sex effect on entropy survive adjustment for ploidy? --------
-sex_by_age <- purrr::map_dfr(AGE_LEVELS, function(a) {
-  d <- filter(hep@meta.data, age == a, has_ploidy)
-  m <- lmerTest::lmer(entropy_score ~ sex + factor(ploidy_call) +
-                        scale(nFeature_RNA) + scale(nCount_RNA) + (1 | sample),
-                      data = d)
-  s <- summary(m)$coefficients["sexmale", ]
-  tibble::tibble(age = a, beta = s[1], se = s[2], df = s[3], p = s[5])
-})
-print(sex_by_age)
+# is the dropout of uncalled cells uniform across age and sex?
+hep@meta.data %>%
+  group_by(age, sex) %>%
+  summarise(pct_called = round(100 * mean(has_ploidy), 1), n = n(),
+            .groups = "drop") %>%
+  arrange(factor(age, levels = AGE_LEVELS), sex) %>%
+  print(n = 20)
 
-# young only: is a sex x ploidy interaction warranted?
-yng    <- filter(hep@meta.data, age == "young", has_ploidy)
-m_full <- lmer(entropy_score ~ sex + factor(ploidy_call) + scale(nFeature_RNA) +
-                 scale(nCount_RNA) + (1 | sample), data = yng)
-m_int  <- lmer(entropy_score ~ sex * factor(ploidy_call) + scale(nFeature_RNA) +
-                 scale(nCount_RNA) + (1 | sample), data = yng)
-print(anova(m_int, m_full))
-
-# ---- 5. binning -------------------------------------------------------------
+# ---- 4. rescale and bin -----------------------------------------------------
 rescale11 <- function(x) {
   rng <- range(x, na.rm = TRUE); 2 * (x - rng[1]) / (rng[2] - rng[1]) - 1
 }
@@ -105,9 +76,7 @@ pdat <- hep@meta.data %>%
             age     = factor(age, levels = AGE_LEVELS),
             entropy = rescale11(entropy_score),
             ploidy  = factor(paste0(ploidy_call, "n"),
-                             levels = c("2n", "4n", "8n")))
-
-pdat <- pdat %>%
+                             levels = c("2n", "4n", "8n"))) %>%
   mutate(entropy_bin = cut(entropy, quantile(entropy, 0:3/3, na.rm = TRUE),
                            labels = c("E-Low", "E-Mid", "E-High"),
                            include.lowest = TRUE))
@@ -118,7 +87,7 @@ CAP_PL <- paste0("Entropy: global tertiles of the [\u22121,1]-rescaled score, ",
                  "each panel normalised to 100% \u00b7 ",
                  scales::comma(nrow(pdat)), " cells with ploidy calls")
 
-# ---- 6. plotting helper -----------------------------------------------------
+# ---- 5. plotting helper -----------------------------------------------------
 make_ploidy_alluvial <- function(dat, fill_var, palette, fill_name, cap,
                                  title = NULL, by_sex = FALSE) {
 
@@ -156,7 +125,7 @@ make_ploidy_alluvial <- function(dat, fill_var, palette, fill_name, cap,
   else        p + facet_wrap(~ age, nrow = 1)
 }
 
-# ---- 7. figures -------------------------------------------------------------
+# ---- 6. figures -------------------------------------------------------------
 flow_pl     <- pdat %>% count(age, entropy_bin, ploidy, sex, name = "n")
 flow_pl_sex <- pdat %>% count(age, sex, entropy_bin, ploidy, name = "n")
 
@@ -173,14 +142,13 @@ pB_pl <- make_ploidy_alluvial(
   flow_pl_sex, "entropy_bin", ENT_PAL, "Entropy stratum", CAP_PL,
   "Hepatocyte entropy and ploidy across age, by sex", by_sex = TRUE)
 
-# ---- 8. export --------------------------------------------------------------
+# ---- 7. export --------------------------------------------------------------
 ggsave("alluvial_entropy_ploidy_byage.pdf",       p_pl,  width = 14, height = 5, device = cairo_pdf)
 ggsave("alluvial_entropy_ploidy_sexpal_rows.pdf", pA_pl, width = 14, height = 8, device = cairo_pdf)
 ggsave("alluvial_entropy_ploidy_entpal_rows.pdf", pB_pl, width = 14, height = 8, device = cairo_pdf)
 
-# ---- 9. source data ---------------------------------------------------------
+# ---- 8. source data ---------------------------------------------------------
 readr::write_csv(flow_pl_sex, "source_data_entropy_ploidy_flow.csv")
-readr::write_csv(sex_by_age,  "source_data_sex_effect_by_age_ploidy_adjusted.csv")
 
 sessionInfo()
 
