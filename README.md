@@ -26,7 +26,7 @@ We generated paired single-nucleus RNA-seq and ATAC-seq (10X Multiome) from **40
 
 - **Raw and processed data**: GEO accession [GSE341533]
 - **Interactive browser**: [https://sciapps.nia.nih.gov/hepatomap/]
-- **Processed AnnData**: Zenodo DOI [10.5281/zenodo.xxxxxxx]
+- **Processed AnnData**: Zenodo DOI [10.5281/zenodo.22218673]
 
 
 ## Contact
