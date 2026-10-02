@@ -347,7 +347,7 @@ if (file.exists(file.path(step6_dir, "ArchRProject.rds"))) {
     rownames(seurat_sub) <- seurat_sub$archr_cell
     
     # Transfer metadata columns
-    cols_to_add <- c("celltype", "sample", "celltype2", "age", "sex")
+    cols_to_add <- c("cell_type", "sample", "subcluster", "age", "sex")
     
     for (colname in cols_to_add) {
         proj <- addCellColData(
