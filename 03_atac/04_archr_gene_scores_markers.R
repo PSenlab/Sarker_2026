@@ -126,7 +126,7 @@ banner("8.4: Export Grouped Gene Scores by Cell Type")
 gene_se <- getGroupSE(
     ArchRProj = proj,
     useMatrix = "GeneScoreMatrix",
-    groupBy   = "celltype",
+    groupBy   = "cell_type",
     divideN   = TRUE,
     verbose   = TRUE
 )
