@@ -7,12 +7,9 @@
 #   This script performs downstream analysis on the preprocessed ArchR project
 #   including imputation, gene score extraction, and marker gene discovery.
 #
-# Prerequisites:
-#   - Run archr_arrow_creation.R (Step 1)
-#   - Run archr_preprocessing.R (Steps 2-7)
 #
 # Input:
-#   - Preprocessed ArchR project (from archr_preprocessing.R Step 7)
+#   - Preprocessed ArchR project 
 #
 # Output:
 #   - Gene score matrix (full and grouped by cell type)
