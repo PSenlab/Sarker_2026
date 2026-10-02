@@ -11,7 +11,7 @@
 #   with a hepatocyte-expressed background.
 #
 # Input:
-#   - AnnData (.h5ad) with celltype labels - used to derive the
+#   - AnnData (.h5ad) with cell_type labels - used to derive the
 #     hepatocyte-expressed background gene set
 #   - Per-cluster gene CSVs from Step 12.4:
 #       P2G_C1_genes.csv, P2G_C2_genes.csv, P2G_C3_genes.csv, P2G_C4_genes.csv
@@ -172,7 +172,7 @@ print("=" * 70)
 adata = sc.read_h5ad(ADATA_PATH)
 print(f"  Full dataset: {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 
-adata = adata[adata.obs["celltype"] == "Hepatocyte"].copy()
+adata = adata[adata.obs["cell_type"] == "hepatocyte"].copy()
 print(f"  Hepatocytes: {adata.n_obs:,} cells")
 
 expr = adata.X
