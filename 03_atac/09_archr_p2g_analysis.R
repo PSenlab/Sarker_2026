@@ -3,28 +3,12 @@
 # Step 12: P2G extraction, clustering, annotation and cross-cell-type plots
 # ==============================================================================
 #
-# Description:
-#   For one cell type per run, extracts peak-to-gene (P2G) links from that cell
-#   type's ArchR project, groups them into k-means clusters on the P2G heatmap,
-#   and annotates the linked peaks with ENCODE cCREs and ChIPseeker. After all
-#   cell types are processed, it also draws cross-cell-type stacked barplots
-#   from the saved per-cell-type annotation summaries.
 #
 # Prerequisites:
 #   - Step 11 (08_archr_peaks_p2g.R), which writes one Step11b_<celltype>_P2G
 #     project per cell type
 #   - ENCODE cCREs for mm10 (mm10-cCREs.bed from ENCODE SCREEN)
 #
-# How to run:
-#   1. For each cell type, set ARCHR_PROJECT_PATH and K_CLUSTERS (4 for
-#      hepatocytes, usually 3 for other cell types) and run the script.
-#      Sections 12.1-12.10 produce that cell type's results.
-#   2. After each run, rename P2G_ChIPseeker_annotation.csv and
-#      P2G_ENCODE_cCRE_annotation.csv to P2G_ChIPseeker_<celltype>.csv and
-#      P2G_ENCODE_cCRE_<celltype>.csv in OUTPUT_DIR.
-#   3. Sections 12.11-12.12 run at the end of every run and draw the
-#      cross-cell-type plots once at least two renamed files of each kind
-#      are in OUTPUT_DIR.
 #
 # Input:
 #   - ArchR project with P2G links (Step11b_<celltype>_P2G, from Step 11)
@@ -39,19 +23,6 @@
 #   - Cross-cell-type stacked barplots (ChIPseeker and ENCODE cCRE)
 #   - Full annotated P2G table (RDS), cluster and top-gene summaries
 #
-# Pipeline Overview:
-#   12.1:  Load ArchR Project
-#   12.2:  Extract P2G Links
-#   12.3:  P2G Heatmap with K-means Clustering
-#   12.4:  Export Per-Cluster Data (CSV + Excel)
-#   12.5:  Export BED Files
-#   12.6:  ENCODE cCRE Annotation
-#   12.7:  ChIPseeker Annotation
-#   12.8:  Save RDS and Final Summary
-#   12.9:  ChIPseeker Stacked Barplot (Single Cell Type)
-#   12.10: ENCODE cCRE Stacked Barplot (Single Cell Type)
-#   12.11: ChIPseeker Cross-Celltype Stacked Barplot
-#   12.12: ENCODE cCRE Cross-Celltype Stacked Barplot
 #
 # ==============================================================================
 
@@ -93,24 +64,26 @@ ENCODE_CCRE_PATH <- "mm10-cCREs.bed"
 OUTPUT_DIR <- "Step12_P2G_Analysis"
 
 # Analysis parameters
-# K_CLUSTERS is set per cell type - use k=4 for Hepatocyte;
+# K_CLUSTERS is set per cell type - use k=4 for hepatocyte;
 # other cell types may use different values (commonly 3)
-K_CLUSTERS <- 4                  # Number of k-means clusters for P2G heatmap (Hepatocyte default)
+K_CLUSTERS <- 4                  # Number of k-means clusters for P2G heatmap (hepatocyte default)
 P2G_COR_CUTOFF <- 0.45           # Correlation cutoff for P2G extraction
 COA_COR_CUTOFF <- 0.5            # Correlation cutoff for co-accessibility
 
-# Cell type order for cross-celltype visualization (left → right on x-axis)
+# Cell type order for cross-celltype visualization (left → right on x-axis).
+# Names match the Step 11 folder names (Step11b_<celltype>_P2G) and the
+# renamed per-cell-type CSVs (P2G_ChIPseeker_<celltype>.csv).
 CELL_ORDER <- c(
-    "Hepatocyte",
-    "Endothelial_01",
-    "Endothelial_02",
-    "Stellate",
-    "Cholangiocyte_01",
-    "Cholangiocyte_02",
-    "Kupffer",
-    "MoMFs",
-    "Tcells",
-    "Bcells"
+    "hepatocyte",
+    "endothelial",
+    "Kupffer_02",
+    "mesenchymal",
+    "cholangiocyte_01",
+    "cholangiocyte_02",
+    "Kupffer_01",
+    "non_resident_myeloid",
+    "T_ILC_cells",
+    "B_cells"
 )
 
 # ==============================================================================
