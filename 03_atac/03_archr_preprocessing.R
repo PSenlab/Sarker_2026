@@ -7,14 +7,6 @@
 # Prerequisites:
 #   - Run archr_arrow_creation.R (Step 1) first to generate Arrow files
 #
-# Pipeline Overview:
-#   Step 1: Arrow File Creation (archr_arrow_creation.R)
-#   Step 2: ArchR Project Creation from Arrow files
-#   Step 3: Doublet Detection and Filtering
-#   Step 4: Iterative Latent Semantic Indexing (LSI)
-#   Step 5: Harmony Batch Correction
-#   Step 6: Metadata Integration
-#   Step 7: WNN UMAP Embedding Transfer
 #
 # Requirements:
 #   - R >= 4.0
