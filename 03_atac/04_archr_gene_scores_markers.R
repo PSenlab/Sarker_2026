@@ -15,12 +15,6 @@
 #   - Gene score matrix (full and grouped by cell type)
 #   - Marker genes per cell type
 #
-# Pipeline Overview:
-#   8.1: Load ArchR Project from Step 7
-#   8.2: Add Imputation Weights
-#   8.3: Export Full Gene Score Matrix
-#   8.4: Export Grouped Gene Scores by Cell Type
-#   8.5: Marker Gene Discovery
 #
 # Requirements:
 #   - R >= 4.0
