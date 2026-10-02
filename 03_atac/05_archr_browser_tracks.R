@@ -4,8 +4,8 @@
 # ==============================================================================
 # Generates ReadsInTSS-normalized coverage tracks over marker/zonation genes
 # for two groupings of the same ArchR project:
-#   (1) all cell types      (groupBy = "celltype")
-#   (2) hepatocyte zonation (groupBy = "celltype2", ordered Hep-01 -> Hep-07)
+#   (1) all cell types      (groupBy = "cell_type")
+#   (2) hepatocyte zonation (groupBy = "subcluster", ordered hep_01 -> hep_07)
 #
 # RNA-derived cell labels (from scRNA/Seurat) are matched back onto the ArchR
 # cell names by reconstructing the ArchR barcode key from each RNA barcode.
@@ -32,8 +32,8 @@ addArchRGenome("mm10")
 ARCHR_PROJECT <- "path/to/ArchR_Projects/Step7_Xwnn_UMAP"
 OUTDIR        <- "Plots"
 
-LABELS_ALL <- "celltype_all.csv"   # provides column `celltype`
-LABELS_HEP <- "celltype_hep.csv"   # provides column `celltype2`
+LABELS_ALL <- "celltype_all.csv"   # provides column `cell_type`
+LABELS_HEP <- "celltype_hep.csv"   # provides column `subcluster`
 
 # base R pdf() has no "Arial"; "sans" maps to the Helvetica/Arial-equivalent.
 # For embedded true Arial, use showtext/extrafont instead.
@@ -117,53 +117,53 @@ proj <- loadArchRProject(ARCHR_PROJECT)
 # ------------------------------------------------------------------------------
 marker_panel <- list(
   # Parenchymal
-  Hepatocyte    = "Abcc2",
-  Cholangiocyte = "Spp1",
+  hepatocyte             = "Abcc2",
+  cholangiocyte          = "Spp1",
   # Mesenchymal
-  Stellate      = "Dcn",
+  mesenchymal            = "Dcn",
   # Endothelial
-  Endothelial   = "Ptprb",
+  endothelial            = "Ptprb",
   # Myeloid
-  Kupffer       = "Cd5l",
-  MoMFs         = "Mctp1",
+  Kupffer                = "Cd5l",
+  `non-resident myeloid` = "Mctp1",
   # Lymphoid
-  T_cell        = "Ms4a4b",
-  B_cell        = "Ebf1"
+  `T/ILC cells`          = "Ms4a4b",
+  `B cells`              = "Ebf1"
 )
 markers_all <- unique(unlist(marker_panel, use.names = FALSE))
 
 # Track order (top -> bottom). These strings must match the labels in the
-# `celltype` column EXACTLY (case + spacing) — verify against the table below.
+# `cell_type` column EXACTLY (case + spacing); verify against the table below.
 celltype_order <- c(
-  "Hepatocyte",
-  "Cholangiocyte 01",
-  "Cholangiocyte 02",
+  "hepatocyte",
+  "cholangiocyte 01",
+  "cholangiocyte 02",
   "Kupffer 01",
-  "Endothelial 02",
-  "Endothelial 01",
-  "Stellate",
-  "T cells",
+  "Kupffer 02",
+  "endothelial",
+  "mesenchymal",
+  "T/ILC cells",
   "B cells",
-  "MoMFs"
+  "non-resident myeloid"
 )
 
-proj$celltype <- label_for_project(proj, LABELS_ALL, "celltype")
-print(table(proj$celltype, useNA = "ifany"))
+proj$cell_type <- label_for_project(proj, LABELS_ALL, "cell_type")
+print(table(proj$cell_type, useNA = "ifany"))
 
 # Sanity check: any name here that isn't in the column is silently ignored;
 # any cell type not listed here is dropped from the plot.
-missing <- setdiff(celltype_order, unique(stats::na.omit(proj$celltype)))
+missing <- setdiff(celltype_order, unique(stats::na.omit(proj$cell_type)))
 if (length(missing)) warning("celltype_order not found in data: ",
                              paste(missing, collapse = ", "))
 
 browser_track_pdf(
-  proj, group_by = "celltype", markers = markers_all,
+  proj, group_by = "cell_type", markers = markers_all,
   use_groups = celltype_order,   # top -> bottom; drops <NA>
   out_pdf = file.path(OUTDIR, "BrowserTrack_allcelltype_10_labeled.pdf")
 )
 
 # ------------------------------------------------------------------------------
-# (2) Hepatocyte zonation (Hep-01 periportal -> Hep-07 pericentral)
+# (2) Hepatocyte zonation (hep_01 periportal -> hep_07 pericentral)
 # ------------------------------------------------------------------------------
 zonation_markers <- list(
   periportal  = c("Cyp2f2", "Cdh1", "Hal"),   # zone 1
@@ -172,13 +172,13 @@ zonation_markers <- list(
 )
 markers_hep <- unique(unlist(zonation_markers, use.names = FALSE))
 
-hep_order <- paste0("Hep-", sprintf("%02d", 1:7))   # top -> bottom
+hep_order <- paste0("hep_", sprintf("%02d", 1:7))   # top -> bottom
 
-proj$celltype2 <- label_for_project(proj, LABELS_HEP, "celltype2")
-print(table(proj$celltype2, useNA = "ifany"))
+proj$subcluster <- label_for_project(proj, LABELS_HEP, "subcluster")
+print(table(proj$subcluster, useNA = "ifany"))
 
 browser_track_pdf(
-  proj, group_by = "celltype2", markers = markers_hep,
-  use_groups = hep_order,   # Hep-01 on top, Hep-07 at bottom; drops <NA>
+  proj, group_by = "subcluster", markers = markers_hep,
+  use_groups = hep_order,   # hep_01 on top, hep_07 at bottom; drops <NA>
   out_pdf = file.path(OUTDIR, "BrowserTrack_Heps_zone_10_labeled.pdf")
 )
