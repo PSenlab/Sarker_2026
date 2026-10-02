@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# Generate group-level BigWigs (age × sex × celltype) using 80 kb Bins (Step 9)
+# Generate group-level BigWigs (age × sex × cell type) using 80 kb Bins (Step 9)
 # ==============================================================================
 #
 # Description:
@@ -8,16 +8,12 @@
 #   grouped by age, sex, and cell type combinations. Uses 80 kb bins for
 #   downstream compartment switching analysis.
 #
-# Prerequisites:
-#   - Run archr_arrow_creation.R (Step 1)
-#   - Run archr_preprocessing.R (Steps 2-7)
-#   - Run archr_downstream_analysis.R (Step 8)
 #
 # Input:
 #   - Preprocessed ArchR project with imputation (from Step 8)
 #
 # Output:
-#   - BigWig files per age × sex × celltype group
+#   - BigWig files per age × sex × cell type group
 #   - Group counts table
 #   - BigWig manifest file
 #
@@ -140,7 +136,7 @@ message(sprintf("[9.1] Total cells: %d", nCells(proj)))
 banner("9.2: Validate Metadata")
 
 meta <- as.data.frame(getCellColData(proj))
-need_cols <- c("age", "sex", "celltype")
+need_cols <- c("age", "sex", "cell_type")
 missing <- setdiff(need_cols, colnames(meta))
 
 if (length(missing)) {
@@ -150,8 +146,8 @@ if (length(missing)) {
 meta <- meta %>%
     mutate(across(all_of(need_cols), as.character))
 
-message(sprintf("[9.2] Unique cell types (n=%d):", length(unique(meta$celltype))))
-for (ct in sort(unique(meta$celltype))) {
+message(sprintf("[9.2] Unique cell types (n=%d):", length(unique(meta$cell_type))))
+for (ct in sort(unique(meta$cell_type))) {
     message(sprintf('  - "%s"', ct))
 }
 
@@ -162,7 +158,7 @@ for (ct in sort(unique(meta$celltype))) {
 banner("9.3: Add Group Labels (Age__Sex__Celltype)")
 
 cells0 <- .get_cells(proj)
-canon_group_vec <- paste(meta$age, meta$sex, meta$celltype, sep = "__")
+canon_group_vec <- paste(meta$age, meta$sex, meta$cell_type, sep = "__")
 stopifnot(length(canon_group_vec) == length(cells0))
 
 proj <- addCellColData(
@@ -206,7 +202,7 @@ if (MIN_CELLS > 0) {
         meta2 <- as.data.frame(getCellColData(proj))
         meta2 <- meta2 %>% mutate(across(all_of(need_cols), as.character))
         cells_sub <- .get_cells(proj)
-        canon_group_vec2 <- paste(meta2$age, meta2$sex, meta2$celltype, sep = "__")
+        canon_group_vec2 <- paste(meta2$age, meta2$sex, meta2$cell_type, sep = "__")
         
         proj <- addCellColData(
             ArchRProj = proj,
@@ -236,8 +232,8 @@ split_counts_used <- tibble(
     group   = names(grp_tbl_used),
     n_cells = as.integer(grp_tbl_used)
 ) %>%
-    separate(group, into = c("age", "sex", "celltype"), sep = "__", remove = FALSE) %>%
-    select(age, sex, celltype, n_cells, group)
+    separate(group, into = c("age", "sex", "cell_type"), sep = "__", remove = FALSE) %>%
+    select(age, sex, cell_type, n_cells, group)
 
 message(sprintf("[9.5] Generated counts for %d groups", nrow(split_counts_used)))
 
@@ -316,8 +312,8 @@ manifest <- tibble(
     group  = grp_labels,
     bigwig = bw_vec
 ) %>%
-    separate(group, into = c("age", "sex", "celltype"), sep = "__", remove = FALSE) %>%
-    select(age, sex, celltype, group, bigwig)
+    separate(group, into = c("age", "sex", "cell_type"), sep = "__", remove = FALSE) %>%
+    select(age, sex, cell_type, group, bigwig)
 
 manifest_file <- file.path(archr_out_dir, MANIFEST_BASE)
 write.table(
