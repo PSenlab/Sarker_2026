@@ -8,36 +8,10 @@
 #   peak-to-gene linkage for each cell type. Processes all cell types in a
 #   loop, creating separate projects per cell type.
 #
-# Prerequisites:
-#   - Run archr_arrow_creation.R (Step 1)
-#   - Run archr_preprocessing.R (Steps 2-7)
-#   - Run archr_downstream_analysis.R (Step 8)
-#   - Run archr_bigwig_generation.R (Step 9) [optional]
-#   - Run archr_rna_integration.R (Step 10)
 #
 # Input:
 #   - ArchR project with RNA integration (from Step 10)
 #
-# Output:
-#   - Per-celltype ArchR projects with:
-#     - MACS2 peak calls (grouped by sex_age)
-#     - Peak matrix
-#     - Co-accessibility network
-#     - Peak-to-gene linkages
-#
-# Pipeline Overview:
-#   11.1: Load ArchR Project from Step 10
-#   11.2: Define Cell Types to Process
-#   For each cell type:
-#     11.3: Subset Cells by Cell Type
-#     11.4: Create sex_age Grouping Variable
-#     11.5: Add Group Coverages
-#     11.6: Call Peaks with MACS2
-#     11.7: Add Peak Matrix
-#     11.8: Save Intermediate Project (Step11a)
-#     11.9: Add Co-Accessibility
-#     11.10: Add Peak-to-Gene Links
-#     11.11: Save Final Project (Step11b)
 #
 # Requirements:
 #   - R >= 4.0
