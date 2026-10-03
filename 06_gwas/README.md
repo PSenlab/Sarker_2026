@@ -21,18 +21,6 @@ Rscript 01_run_gwas_scavenge.R \
   --scavenge_cores 55
 ```
 
-### All cell types
-
-```bash
-# Update the path placeholders inside 02_run_all_celltypes.sh, then:
-nohup bash 02_run_all_celltypes.sh > run_all.log 2>&1 &
-```
-
-
-
-
-
-
 ## External data
 
 - NHGRI-EBI GWAS Catalog associations TSV: https://www.ebi.ac.uk/gwas/docs/file-downloads
