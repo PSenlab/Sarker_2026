@@ -1,199 +1,399 @@
-#!/usr/bin/env python3
-#===============================================================================
-# Cell Type Annotation & Differential Expression for Single-Nucleus Multi-Ome
-#===============================================================================
-# Description: Annotates cell types based on Leiden clustering, validates
-#              with canonical marker gene expression, performs Wilcoxon DE,
-#              and generates dotplots + UMAP marker overlays per cell type
+#!/usr/bin/env Rscript
+# ==============================================================================
+# ArchR peak calling, co-accessibility, and peak-to-gene Linkage (Step 11)
+# ==============================================================================
 #
-# Input:       Integrated AnnData with clustering (from 01_scvi_integration_clustering.py)
-# Output:      Annotated AnnData with cell type labels + DE results
+# Description:
+#   This script performs MACS2 peak calling, co-accessibility analysis, and
+#   peak-to-gene linkage for each cell type. Processes all cell types in a
+#   loop, creating separate projects per cell type.
 #
-# Cell Types:  hepatocyte, cholangiocyte 01, cholangiocyte 02, endothelial,
-#              Kupffer 01, Kupffer 02, non-resident myeloid, mesenchymal,
-#              T/ILC cells, B cells
-#===============================================================================
+#
+# Input:
+#   - ArchR project with RNA integration (from Step 10)
+#
+#
+# Requirements:
+#   - R >= 4.0
+#   - ArchR >= 1.0.2
+#   - MACS2 installed and accessible
+#   - BSgenome.Mmusculus.UCSC.mm10
+#
+# ==============================================================================
 
-import logging
-import scanpy as sc
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib as mpl
+# ==============================================================================
+# SETUP AND CONFIGURATION
+# ==============================================================================
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+# Load Required Libraries
+suppressPackageStartupMessages({
+    library(ArchR)
+    library(GenomicRanges)
+    library(dplyr)
+    library(stringr)
+    library(igraph)
+    library(Matrix)
+    library(matrixStats)
+    library(SummarizedExperiment)
+    library(BSgenome.Mmusculus.UCSC.mm10)
+})
 
-# Global plot settings
-mpl.rcParams["font.family"] = "Arial"
-mpl.rcParams["pdf.fonttype"] = 42
-mpl.rcParams["ps.fonttype"] = 42
+# Set Global Parameters
+addArchRThreads(threads = 60)
+addArchRGenome("mm10")
 
-#-------------------------------------------------------------------------------
-# Configuration
-#-------------------------------------------------------------------------------
-INPUT_FILE = "integrated_scvi.h5ad"
-OUTPUT_FILE = "annotated.h5ad"
+# Define Paths (modify according to your directory structure)
+STEP10_PROJ_PATH <- "path/to/ArchR_Projects/Step10_RNA_Integrated"
+OUTPUT_BASE <- "path/to/ArchR_Projects"
+PATH_TO_MACS2 <- "path/to/macs2"  # e.g., /path/to/conda/envs/env_name/bin/macs2
 
-# Marker genes for cell type validation
-MARKER_GENES = {
-    "cholangiocyte": ["Kcnma1", "Ctnnd2", "Krt19", "Epcam"],
-    "endothelial": ["Flt1", "Pecam1"],
-    "hepatocyte": ["Cps1", "Cyp2e1", "Cyp7b1"],
-    "Kupffer": ["Clec4f", "Adgre1"],
-    "non-resident myeloid": ["Cx3cr1", "Ccr2"],
-    "mesenchymal": ["Reln", "Lrat"],
-    "B cells": ["Ms4a1", "Pax5"],
-    "T/ILC cells": ["Itk", "Camk4"],
+# Processing Parameters
+MIN_CELLS_PER_CELLTYPE <- 100    # Skip cell types with fewer cells
+CELLTYPES_TO_EXCLUDE <- c()      # Add cell types to skip, e.g., c("Unassigned")
+
+# Peak Calling Parameters (MACS2)
+PEAK_CUTOFF <- 0.01              # FDR cutoff for peak calling
+MAX_PEAKS <- 500000              # Maximum peaks per group
+
+# Group Coverage Parameters
+MIN_CELLS_COVERAGE <- 40         # Minimum cells per group for coverage
+MAX_CELLS_COVERAGE <- 10000      # Maximum cells per group for coverage
+MAX_FRAGMENTS <- 25e6            # Maximum fragments per group
+MIN_REPLICATES <- 2              # Minimum replicates per group
+MAX_REPLICATES <- 40             # Maximum replicates per group
+
+# Co-Accessibility Parameters
+COA_COR_CUTOFF <- 0.4            # Correlation cutoff for co-accessibility
+COA_K <- 100                     # Number of nearest neighbors
+COA_MAX_DIST <- 1000000          # Maximum distance (1 Mb)
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+#' Print a formatted banner for pipeline steps
+#' @param text Text to display in banner
+banner <- function(text) {
+    line <- paste(rep("=", 80), collapse = "")
+    message("\n", line)
+    message(text)
+    message(line, "\n")
 }
 
-# Cluster to cell type mapping (based on leiden_5 resolution)
-CLUSTER_ANNOTATION = {
-    "0": "hepatocyte",
-    "1": "hepatocyte",
-    "2": "endothelial",
-    "3": "hepatocyte",
-    "4": "Kupffer 01",
-    "5": "mesenchymal",
-    "6": "hepatocyte",
-    "7": "hepatocyte",
-    "8": "T/ILC cells",
-    "9": "hepatocyte",
-    "10": "hepatocyte",
-    "11": "non-resident myeloid",
-    "12": "Kupffer 02",
-    "13": "B cells",
-    "14": "cholangiocyte 01",
-    "15": "cholangiocyte 02",
-    "17": "Unassigned",
-    "18": "Unassigned",
-    "19": "Unassigned",
+#' Ensure directory exists
+#' @param dir_path Path to directory
+#' @return Invisibly returns the directory path
+ensure_dir <- function(dir_path) {
+    if (!dir.exists(dir_path)) {
+        dir.create(dir_path, recursive = TRUE)
+    }
+    invisible(dir_path)
 }
 
-# Cell type color mapping
-CELLTYPE_COLORS = {
-    "hepatocyte": "#17becf",
-    "endothelial": "#a6cee3",
-    "Kupffer 02": "#1f78b4",
-    "mesenchymal": "#fb9a99",
-    "Kupffer 01": "#b2df8a",
-    "T/ILC cells": "#fdbf6f",
-    "non-resident myeloid": "#33a02c",
-    "cholangiocyte 01": "#e31a1c",
-    "cholangiocyte 02": "#cab2d6",
-    "B cells": "#e377c2",
-    "Unassigned": "#d3d3d3",
+#' Clean cell type name for use in directory names
+#' @param ct Cell type name
+#' @return Cleaned name safe for file paths
+clean_celltype_name <- function(ct) {
+    gsub("[^A-Za-z0-9_]", "_", ct)
 }
 
-#-------------------------------------------------------------------------------
-# Main Pipeline
-#-------------------------------------------------------------------------------
-def main():
-    # -------------------------------------------------------------------------
-    # Step 1: Load data
-    # -------------------------------------------------------------------------
-    logger.info(f"Loading {INPUT_FILE}...")
-    adata = sc.read_h5ad(INPUT_FILE)
-    logger.info(f"Data shape: {adata.shape}")
+# ==============================================================================
+# 11.1: LOAD ARCHR PROJECT
+# ==============================================================================
 
-    # -------------------------------------------------------------------------
-    # Step 2: Annotate cell types based on leiden_5 clustering
-    # -------------------------------------------------------------------------
-    logger.info("Annotating cell types...")
-    adata.obs["cell_type"] = adata.obs["leiden_5"].map(CLUSTER_ANNOTATION).astype("category")
+banner("11.1: Load ArchR Project from Step 10")
 
-    # Assign colors
-    adata.uns["cell_type_colors"] = [
-        CELLTYPE_COLORS[ct] for ct in adata.obs["cell_type"].cat.categories
-    ]
+if (!dir.exists(STEP10_PROJ_PATH)) {
+    stop(sprintf("[FATAL] Project path does not exist: %s", STEP10_PROJ_PATH))
+}
 
-    logger.info(f"Cell type distribution:\n{adata.obs['cell_type'].value_counts()}")
+proj_main <- loadArchRProject(path = STEP10_PROJ_PATH)
+message(sprintf("[11.1] Loaded project from Step 10: %s", STEP10_PROJ_PATH))
+message(sprintf("[11.1] Total cells: %d", nCells(proj_main)))
 
-    # -------------------------------------------------------------------------
-    # Step 3: Generate canonical marker gene dotplot
-    # -------------------------------------------------------------------------
-    logger.info("Generating canonical marker gene dotplot...")
-    sc.pl.dotplot(adata, MARKER_GENES, groupby="cell_type", save="_canonical_markers.pdf")
+# Validate required metadata
+stopifnot("cell_type" %in% colnames(proj_main@cellColData))
+stopifnot("sex" %in% colnames(proj_main@cellColData))
+stopifnot("age" %in% colnames(proj_main@cellColData))
 
-    # -------------------------------------------------------------------------
-    # Step 4: Perform differential expression analysis (Wilcoxon) per cell type
-    # -------------------------------------------------------------------------
-    logger.info("Running Wilcoxon rank-sum DE across cell types...")
-    sc.tl.rank_genes_groups(adata, groupby="cell_type", method="wilcoxon")
+# Validate GeneExpressionMatrix exists (required for P2G)
+available_matrices <- getAvailableMatrices(proj_main)
+if (!"GeneExpressionMatrix" %in% available_matrices) {
+    stop("[FATAL] GeneExpressionMatrix not found. Run archr_rna_integration.R (Step 10) first.")
+}
 
-    # Extract DE results per cell type
-    result = adata.uns["rank_genes_groups"]
-    groups = result["names"].dtype.names
-    de_results = {}
+message(sprintf("[11.1] Available matrices: %s", paste(available_matrices, collapse = ", ")))
 
-    for group in groups:
-        df = pd.DataFrame({
-            "Gene": result["names"][group],
-            "Score": result["scores"][group],
-            "LogFC": result["logfoldchanges"][group],
-            "pvals": result["pvals"][group],
-            "pvals_adj": result["pvals_adj"][group],
-        })
-        de_results[group] = df
-        logger.info(f"  {group}: {(df['pvals_adj'] < 0.05).sum()} significant genes (FDR < 0.05)")
+# ==============================================================================
+# 11.2: DEFINE CELL TYPES TO PROCESS
+# ==============================================================================
 
-    # Save DE results to Excel (one sheet per cell type)
-    with pd.ExcelWriter("de_results_wilcoxon.xlsx", engine="openpyxl") as writer:
-        for group, df in de_results.items():
-            sheet_name = group[:31]  # Excel sheet name limit
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-    logger.info("Saved DE results to de_results_wilcoxon.xlsx")
+banner("11.2: Define Cell Types to Process")
 
-    # -------------------------------------------------------------------------
-    # Step 5: Ranked genes dotplot (all cell types)
-    # -------------------------------------------------------------------------
-    logger.info("Generating ranked genes dotplot (all cell types)...")
-    sc.pl.rank_genes_groups_dotplot(
-        adata,
-        n_genes=5,
-        values_to_plot="logfoldchanges",
-        min_logfoldchange=6,
-        vmax=8,
-        vmin=-8,
-        cmap="bwr",
-        show=False,
-    )
-    plt.savefig("rank_genes_groups_dotplot_all.pdf", bbox_inches="tight", dpi=300)
-    plt.close()
-    logger.info("Saved rank_genes_groups_dotplot_all.pdf")
+all_celltypes <- unique(proj_main$cell_type)
+celltypes_to_process <- setdiff(all_celltypes, CELLTYPES_TO_EXCLUDE)
 
-    # -------------------------------------------------------------------------
-    # Step 6: UMAP overlay of top marker genes per cell type
-    # -------------------------------------------------------------------------
-    logger.info("Generating UMAP marker overlays per cell type...")
+message(sprintf("[11.2] Total cell types found: %d", length(all_celltypes)))
+message(sprintf("[11.2] Cell types to process: %d", length(celltypes_to_process)))
 
-    # Exclude Unassigned from UMAP overlays
-    celltypes_to_plot = [ct for ct in adata.obs["cell_type"].cat.categories if ct != "Unassigned"]
+# Print cell counts per cell type
+celltype_counts <- table(proj_main$cell_type)
+for (ct in celltypes_to_process) {
+    n_cells <- celltype_counts[ct]
+    status <- if (n_cells >= MIN_CELLS_PER_CELLTYPE) "OK" else "SKIP"
+    message(sprintf("  - %s: %d cells [%s]", ct, n_cells, status))
+}
 
-    for celltype in celltypes_to_plot:
-        top_genes = sc.get.rank_genes_groups_df(adata, group=celltype).head(9)["names"]
+# ==============================================================================
+# 11.3-11.11: PROCESS EACH CELL TYPE
+# ==============================================================================
 
-        sc.pl.embedding(
-            adata,
-            basis="X_wnn",
-            color=[*top_genes, "cell_type"],
-            legend_loc="on data",
-            frameon=False,
-            ncols=3,
-            show=False,
+banner("11.3-11.11: Process Each Cell Type")
+
+results_summary <- data.frame(
+    cell_type = character(),
+    n_cells = integer(),
+    n_peaks = integer(),
+    n_p2g_links = integer(),
+    status = character(),
+    stringsAsFactors = FALSE
+)
+
+for (ct in celltypes_to_process) {
+    
+    message("\n", strrep("=", 70))
+    message(sprintf(">>> PROCESSING CELL TYPE: %s", ct))
+    message(strrep("=", 70))
+    
+    ct_clean <- clean_celltype_name(ct)
+    
+    tryCatch({
+        
+        # -----------------------------------------------------------------
+        # 11.3: SUBSET CELLS BY CELL TYPE
+        # -----------------------------------------------------------------
+        message(sprintf("[11.3] Subsetting %s cells", ct))
+        
+        ct_cells <- rownames(proj_main@cellColData)[proj_main$cell_type == ct]
+        
+        if (length(ct_cells) < MIN_CELLS_PER_CELLTYPE) {
+            message(sprintf("[11.3] SKIPPING %s: only %d cells (need >= %d)", 
+                            ct, length(ct_cells), MIN_CELLS_PER_CELLTYPE))
+            
+            results_summary <- rbind(results_summary, data.frame(
+                cell_type = ct,
+                n_cells = length(ct_cells),
+                n_peaks = NA,
+                n_p2g_links = NA,
+                status = "SKIPPED_LOW_CELLS"
+            ))
+            next
+        }
+        
+        step11a_dir <- file.path(OUTPUT_BASE, paste0("Step11a_", ct_clean, "_Peaks"))
+        ensure_dir(step11a_dir)
+        
+        proj <- subsetArchRProject(
+            ArchRProj = proj_main,
+            cells = ct_cells,
+            outputDirectory = step11a_dir,
+            dropCells = TRUE,
+            force = TRUE
         )
+        
+        message(sprintf("[11.3] Subset project: %d cells", nCells(proj)))
+        
+        # -----------------------------------------------------------------
+        # 11.4: CREATE SEX_AGE GROUPING VARIABLE
+        # -----------------------------------------------------------------
+        message(sprintf("[11.4] Creating sex_age grouping variable"))
+        
+        proj$sex_age <- paste0(proj$sex, "_", proj$age)
+        
+        message(sprintf("[11.4] sex_age groups:"))
+        print(table(proj$sex_age))
+        
+        # -----------------------------------------------------------------
+        # 11.5: ADD GROUP COVERAGES
+        # -----------------------------------------------------------------
+        message(sprintf("[11.5] Adding group coverages"))
+        
+        proj <- addGroupCoverages(
+            ArchRProj     = proj,
+            groupBy       = "sex_age",
+            useLabels     = TRUE,
+            minCells      = MIN_CELLS_COVERAGE,
+            maxCells      = MAX_CELLS_COVERAGE,
+            maxFragments  = MAX_FRAGMENTS,
+            minReplicates = MIN_REPLICATES,
+            maxReplicates = MAX_REPLICATES,
+            sampleRatio   = 0.8,
+            kmerLength    = 6,
+            threads       = getArchRThreads(),
+            force         = TRUE
+        )
+        
+        message(sprintf("[11.5] Group coverages added"))
+        
+        # -----------------------------------------------------------------
+        # 11.6: CALL PEAKS WITH MACS2
+        # -----------------------------------------------------------------
+        message(sprintf("[11.6] Calling peaks with MACS2"))
+        
+        proj <- addReproduciblePeakSet(
+            ArchRProj   = proj,
+            groupBy     = "sex_age",
+            pathToMacs2 = PATH_TO_MACS2,
+            cutOff      = PEAK_CUTOFF,
+            maxPeaks    = MAX_PEAKS,
+            plot        = FALSE,
+            force       = TRUE
+        )
+        
+        peak_set <- getPeakSet(proj)
+        n_peaks <- length(peak_set)
+        message(sprintf("[11.6] Peaks called: %d", n_peaks))
+        
+        # -----------------------------------------------------------------
+        # 11.7: ADD PEAK MATRIX
+        # -----------------------------------------------------------------
+        message(sprintf("[11.7] Adding peak matrix"))
+        
+        proj <- addPeakMatrix(proj)
+        
+        message(sprintf("[11.7] Peak matrix added"))
+        
+        # -----------------------------------------------------------------
+        # 11.8: SAVE INTERMEDIATE PROJECT (STEP 11a)
+        # -----------------------------------------------------------------
+        message(sprintf("[11.8] Saving intermediate project"))
+        
+        proj <- saveArchRProject(
+            ArchRProj = proj,
+            outputDirectory = step11a_dir,
+            load = TRUE
+        )
+        
+        message(sprintf("[11.8] Saved: %s", step11a_dir))
+        
+        # Reload to fix Arrow indexing issues
+        proj <- loadArchRProject(step11a_dir)
+        
+        # -----------------------------------------------------------------
+        # 11.9: ADD CO-ACCESSIBILITY
+        # -----------------------------------------------------------------
+        message(sprintf("[11.9] Adding co-accessibility"))
+        
+        proj <- addCoAccessibility(
+            ArchRProj   = proj,
+            reducedDims = "IterativeLSI",
+            corCutOff   = COA_COR_CUTOFF,
+            k           = COA_K,
+            maxDist     = COA_MAX_DIST
+        )
+        
+        # Validate co-accessibility was added
+        coa <- getCoAccessibility(proj)
+        if (is.null(coa)) {
+            warning(sprintf("[11.9] Co-accessibility not added for %s", ct))
+        } else {
+            message(sprintf("[11.9] Co-accessibility added: %d links", length(coa)))
+        }
+        
+        # -----------------------------------------------------------------
+        # 11.10: ADD PEAK-TO-GENE LINKS
+        # -----------------------------------------------------------------
+        message(sprintf("[11.10] Adding peak-to-gene links"))
+        
+        proj <- addPeak2GeneLinks(
+            ArchRProj   = proj,
+            reducedDims = "IterativeLSI",
+            useMatrix   = "GeneExpressionMatrix"
+        )
+        
+        # Get P2G link count
+        p2g <- getPeak2GeneLinks(proj)
+        n_p2g <- if (!is.null(p2g)) length(p2g) else 0
+        message(sprintf("[11.10] Peak-to-gene links added: %d", n_p2g))
+        
+        # -----------------------------------------------------------------
+        # 11.11: SAVE FINAL PROJECT (STEP 11b)
+        # -----------------------------------------------------------------
+        message(sprintf("[11.11] Saving final project"))
+        
+        step11b_dir <- file.path(OUTPUT_BASE, paste0("Step11b_", ct_clean, "_P2G"))
+        ensure_dir(step11b_dir)
+        
+        proj <- saveArchRProject(
+            ArchRProj = proj,
+            outputDirectory = step11b_dir,
+            load = TRUE
+        )
+        
+        message(sprintf("[11.11] Saved: %s", step11b_dir))
+        
+        # Record results
+        results_summary <- rbind(results_summary, data.frame(
+            cell_type = ct,
+            n_cells = nCells(proj),
+            n_peaks = n_peaks,
+            n_p2g_links = n_p2g,
+            status = "SUCCESS"
+        ))
+        
+        message(sprintf("[11.11] COMPLETED %s: %d cells, %d peaks, %d P2G links", 
+                        ct, nCells(proj), n_peaks, n_p2g))
+        
+        # Clean up memory
+        rm(proj)
+        gc()
+        
+    }, error = function(e) {
+        message(sprintf("[ERROR] Processing %s failed: %s", ct, e$message))
+        
+        results_summary <<- rbind(results_summary, data.frame(
+            cell_type = ct,
+            n_cells = NA,
+            n_peaks = NA,
+            n_p2g_links = NA,
+            status = paste0("ERROR: ", e$message)
+        ))
+    })
+}
 
-        safe_name = celltype.replace("/", "_").replace(" ", "_")
-        filename = f"wnn_umap_{safe_name}.pdf"
-        plt.savefig(filename, bbox_inches="tight", dpi=300)
-        plt.close()
-        logger.info(f"  Saved {filename}")
+# ==============================================================================
+# PIPELINE SUMMARY
+# ==============================================================================
 
-    # -------------------------------------------------------------------------
-    # Step 7: Save annotated AnnData
-    # -------------------------------------------------------------------------
-    adata.write_h5ad(OUTPUT_FILE)
-    logger.info(f"Saved annotated AnnData to {OUTPUT_FILE}")
+banner("STEP 11 COMPLETE: PEAK CALLING AND P2G LINKAGE")
 
+message("Summary by Cell Type:")
+print(results_summary)
 
-if __name__ == "__main__":
-    main()
+# Save summary
+summary_file <- file.path(OUTPUT_BASE, "Step11_summary.tsv")
+write.table(
+    results_summary,
+    file = summary_file,
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+)
+message(sprintf("\nSummary saved: %s", summary_file))
+
+# Overall statistics
+n_success <- sum(results_summary$status == "SUCCESS", na.rm = TRUE)
+n_skipped <- sum(grepl("SKIPPED", results_summary$status), na.rm = TRUE)
+n_error <- sum(grepl("ERROR", results_summary$status), na.rm = TRUE)
+
+message(sprintf("\nOverall Results:"))
+message(sprintf("  Successful: %d", n_success))
+message(sprintf("  Skipped: %d", n_skipped))
+message(sprintf("  Errors: %d", n_error))
+
+message("\nOutput directories:")
+message(sprintf("  Peaks (11a): %s/Step11a_*_Peaks/", OUTPUT_BASE))
+message(sprintf("  P2G (11b): %s/Step11b_*_P2G/", OUTPUT_BASE))
+
+# Save session info for reproducibility
+sessionInfo()
