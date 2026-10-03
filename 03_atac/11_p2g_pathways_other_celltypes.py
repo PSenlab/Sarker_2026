@@ -5,13 +5,13 @@
 #
 # Description:
 #   Runs Reactome pathway enrichment on ArchR P2G-linked genes for each
-#   non-hepatocyte cell type (Endothelial, Stellate, Cholangiocyte, Kupffer,
-#   MoMFs, T cells, B cells). For each cell type, uses cell type-specific
-#   expressed genes as background. Mouse genes are converted to human
-#   orthologs via mygene before running Enrichr.
+#   non-hepatocyte cell type (endothelial, Kupffer 01, Kupffer 02, mesenchymal,
+#   cholangiocyte 01/02, non-resident myeloid, T/ILC cells, B cells). For each
+#   cell type, uses cell type-specific expressed genes as background. Mouse
+#   genes are converted to human orthologs via mygene before running Enrichr.
 #
 # Input:
-#   - Annotated AnnData (.h5ad) with celltype labels
+#   - Annotated AnnData (.h5ad) with cell_type labels
 #   - Per-celltype P2G_AllClusters_GENES.xlsx files
 #     (from archr_p2g_analysis.R Step 12.4)
 #
@@ -44,7 +44,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE THESE PATHS
 # ==============================================================================
 
-# AnnData with celltype annotations
+# AnnData with cell_type annotations
 ADATA_PATH = "integrated_scvi.h5ad"
 
 # Base directory containing per-celltype P2G output folders
@@ -55,31 +55,32 @@ P2G_BASE_DIR = "path/to/RNA_ATAC_archR/allcelltype"
 OUTPUT_DIR = "p2g_pathway_enrichment"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Cell types to process (Hepatocyte excluded - analyzed separately)
+# Cell types to process (hepatocyte excluded - analyzed separately).
+# Folder-style names, matching the Step 11 folders and CELL_ORDER in Step 12.
 CELL_TYPES = [
-    "Endothelial_01",
-    "Endothelial_02",
-    "Stellate",
-    "Cholangiocyte_01",
-    "Cholangiocyte_02",
-    "Kupffer",
-    "MoMFs",
-    "Tcells",
-    "Bcells",
+    "endothelial",
+    "Kupffer_02",
+    "mesenchymal",
+    "cholangiocyte_01",
+    "cholangiocyte_02",
+    "Kupffer_01",
+    "non_resident_myeloid",
+    "T_ILC_cells",
+    "B_cells",
 ]
 
-# Map P2G folder name to AnnData celltype label (if they differ)
-# Update if your celltype labels in adata.obs use different naming
+# Map P2G folder name to AnnData cell_type label (if they differ)
+# Update if your cell_type labels in adata.obs use different naming
 CELLTYPE_TO_ADATA_LABEL = {
-    "Endothelial_01": "Endothelial.01",
-    "Endothelial_02": "Endothelial.02",
-    "Stellate": "Stellate",
-    "Cholangiocyte_01": "Cholangiocyte.01",
-    "Cholangiocyte_02": "Cholangiocyte.02",
-    "Kupffer": "Kupffer",
-    "MoMFs": "MoMFs",
-    "Tcells": "lymp_T",
-    "Bcells": "lymp_B",
+    "endothelial": "endothelial",
+    "Kupffer_02": "Kupffer 02",
+    "mesenchymal": "mesenchymal",
+    "cholangiocyte_01": "cholangiocyte 01",
+    "cholangiocyte_02": "cholangiocyte 02",
+    "Kupffer_01": "Kupffer 01",
+    "non_resident_myeloid": "non-resident myeloid",
+    "T_ILC_cells": "T/ILC cells",
+    "B_cells": "B cells",
 }
 
 # Analysis parameters
@@ -98,7 +99,7 @@ TOP_N_PATHWAYS = 5
 
 def get_background_genes(adata, celltype_label):
     """Compute expressed background genes for a given celltype."""
-    sub = adata[adata.obs["celltype"] == celltype_label].copy()
+    sub = adata[adata.obs["cell_type"] == celltype_label].copy()
     if sub.n_obs == 0:
         return []
 
@@ -301,7 +302,7 @@ print("=" * 70)
 
 adata = sc.read_h5ad(ADATA_PATH)
 print(f"  Full dataset: {adata.n_obs:,} cells x {adata.n_vars:,} genes")
-print(f"  Cell types: {sorted(adata.obs['celltype'].unique().tolist())}")
+print(f"  Cell types: {sorted(adata.obs['cell_type'].unique().tolist())}")
 
 
 # Process each cell type
