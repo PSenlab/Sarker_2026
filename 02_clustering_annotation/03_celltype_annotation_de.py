@@ -99,26 +99,26 @@ def main():
     # Step 2: Annotate cell types based on leiden_5 clustering
     # -------------------------------------------------------------------------
     logger.info("Annotating cell types...")
-    adata.obs["celltype"] = adata.obs["leiden_5"].map(CLUSTER_ANNOTATION).astype("category")
+    adata.obs["cell_type"] = adata.obs["leiden_5"].map(CLUSTER_ANNOTATION).astype("category")
 
     # Assign colors
-    adata.uns["celltype_colors"] = [
-        CELLTYPE_COLORS[ct] for ct in adata.obs["celltype"].cat.categories
+    adata.uns["cell_type_colors"] = [
+        CELLTYPE_COLORS[ct] for ct in adata.obs["cell_type"].cat.categories
     ]
 
-    logger.info(f"Cell type distribution:\n{adata.obs['celltype'].value_counts()}")
+    logger.info(f"Cell type distribution:\n{adata.obs['cell_type'].value_counts()}")
 
     # -------------------------------------------------------------------------
     # Step 3: Generate canonical marker gene dotplot
     # -------------------------------------------------------------------------
     logger.info("Generating canonical marker gene dotplot...")
-    sc.pl.dotplot(adata, MARKER_GENES, groupby="celltype", save="_canonical_markers.pdf")
+    sc.pl.dotplot(adata, MARKER_GENES, groupby="cell_type", save="_canonical_markers.pdf")
 
     # -------------------------------------------------------------------------
     # Step 4: Perform differential expression analysis (Wilcoxon) per cell type
     # -------------------------------------------------------------------------
     logger.info("Running Wilcoxon rank-sum DE across cell types...")
-    sc.tl.rank_genes_groups(adata, groupby="celltype", method="wilcoxon")
+    sc.tl.rank_genes_groups(adata, groupby="cell_type", method="wilcoxon")
 
     # Extract DE results per cell type
     result = adata.uns["rank_genes_groups"]
@@ -167,7 +167,7 @@ def main():
     logger.info("Generating UMAP marker overlays per cell type...")
 
     # Exclude Unassigned from UMAP overlays
-    celltypes_to_plot = [ct for ct in adata.obs["celltype"].cat.categories if ct != "Unassigned"]
+    celltypes_to_plot = [ct for ct in adata.obs["cell_type"].cat.categories if ct != "Unassigned"]
 
     for celltype in celltypes_to_plot:
         top_genes = sc.get.rank_genes_groups_df(adata, group=celltype).head(9)["names"]
@@ -175,7 +175,7 @@ def main():
         sc.pl.embedding(
             adata,
             basis="X_wnn",
-            color=[*top_genes, "celltype"],
+            color=[*top_genes, "cell_type"],
             legend_loc="on data",
             frameon=False,
             ncols=3,
