@@ -3,11 +3,42 @@
 # Global Cell Type Analysis Across Aging
 # ==============================================================================
 #
+# Description:
+#   Global (all cell types) visualization and compositional analysis of the
+#   liver aging multi-ome dataset, stratified by sex. Complements
+#   hepatocyte/01_hep_subcluster_zonation_analysis.py, which handles the hepatocyte
+#   sub-cluster deep dive (subcluster + zonation).
+#
 # Input:
 #   - rna_wnn.h5ad (from 04_multiome_integration/02_wnn_integration.py)
 #     with cell_type, sex, age, sample labels and WNN UMAP coordinates
 #
+# Output:
+#   Figures:
+#     - umap_WNN_age.pdf           (global UMAP colored by age)
+#     - umap_WNN_celltype.pdf      (global UMAP colored by cell type)
+#     - boxplot_celltype_by_age_male_female.pdf
+#         (panel-style figure: male top, female bottom, one-way ANOVA + BH FDR,
+#          * p<0.05, ** p<0.01, *** p<0.001, n.s. non-significant,
+#          red dots = outliers)
+#     - stacked_bar_celltype_pct_{sex}.pdf
+#     - stacked_bar_celltype_counts_{sex}.pdf
 #
+#   Tables:
+#     - celltype_percentages_per_sample.csv
+#     - celltype_age_ANOVA_by_sex.csv
+#     - {sex}_celltype_percentages.csv
+#     - {sex}_celltype_anova.csv
+#     - stacked_celltype_proportions_{sex}.csv
+#
+# Pipeline:
+#   0. Load data
+#   1. Global WNN UMAP by age
+#   2. Global WNN UMAP by cell type
+#   3. Cell type proportions and ANOVA by sex
+#   4. Boxplots of cell type proportions by age
+#   5. Stacked barplots of cell type proportions by age (percentage)
+#   6. Stacked barplots of cell type counts by age
 #
 #
 # ==============================================================================
