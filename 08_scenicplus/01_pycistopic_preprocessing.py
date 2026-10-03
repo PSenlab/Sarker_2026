@@ -1,57 +1,5 @@
 #!/usr/bin/env python3
 """
-pycisTopic Preprocessing Pipeline for SCENIC+ — ALL COMPARTMENTS
-=================================================================
-liver aging multiome atlas: all_celltypes, Hepatocyte, endothelial_Kupffer02,
-myeloid, and T_ILC.
-
-IMPORTANT — why each compartment is a FULL independent run
-----------------------------------------------------------
-The compartment subset is applied at Step 3, and it propagates into the peaks:
-
-    Step 3  loads a compartment-specific cell_data.tsv (that compartment's
-            barcodes only)
-    Step 4  passes that frame to export_pseudobulk  -> pseudobulk BEDs contain
-            only that compartment's fragments
-    Step 5  MACS2 on those BEDs                     -> compartment-specific peaks
-    Step 6  consensus regions                       -> compartment-specific
-    Step 8  QC / FRIP computed against those regions
-    Step 10 cisTopic objects built on those regions
-
-So peaks are called WITHIN each compartment and are NOT shared or comparable
-across compartments. Steps 1-11 therefore cannot be run once and reused; every
-compartment gets its own outDir, its own consensus_regions.bed, and its own
-merged object. Only chromosome sizes (Step 2) are genuinely shared, so they are
-fetched once and passed into the loop.
-
-A second, different subsetting happens at Step 13: Step 10 admits every barcode
-passing ATAC QC in the fragments file (not only compartment cells), so the
-annotation-based cistopic_obj.subset() in Step 13 is what actually trims the
-object down to the compartment.
-
-Per-compartment inputs
-----------------------
-Each entry in COMPARTMENTS needs a cell_data TSV exported from that
-compartment's .h5ad, with:
-    index   = barcode (adata.obs_names)
-    columns : sample_id (or 'sample'), celltype, age, sex
-
-Usage
------
-    # all compartments, end to end
-    python 01_pycistopic_preprocessing.py
-
-    # one compartment
-    python 01_pycistopic_preprocessing.py --run T_ILC
-
-    # annotation only (merged objects already built)
-    python 01_pycistopic_preprocessing.py --skip-preprocessing
-
-    # reuse existing QC parquets
-    python 01_pycistopic_preprocessing.py --run myeloid --skip-qc
-
-"""
-
 # === Standard Library ===
 import os
 import re
