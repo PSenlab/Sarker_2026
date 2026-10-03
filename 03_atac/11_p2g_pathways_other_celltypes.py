@@ -6,9 +6,7 @@
 # Description:
 #   Runs Reactome pathway enrichment on ArchR P2G-linked genes for each
 #   non-hepatocyte cell type (endothelial, Kupffer 01, Kupffer 02, mesenchymal,
-#   cholangiocyte 01/02, non-resident myeloid, T/ILC cells, B cells). For each
-#   cell type, uses cell type-specific expressed genes as background. Mouse
-#   genes are converted to human orthologs via mygene before running Enrichr.
+#   cholangiocyte 01/02, non-resident myeloid, T/ILC cells, B cells). 
 #
 # Input:
 #   - Annotated AnnData (.h5ad) with cell_type labels
