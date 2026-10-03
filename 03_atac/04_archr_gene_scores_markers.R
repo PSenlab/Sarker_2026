@@ -153,7 +153,7 @@ banner("8.5: Marker Gene Discovery")
 markers <- getMarkerFeatures(
     ArchRProj  = proj,
     useMatrix  = "GeneScoreMatrix",
-    groupBy    = "celltype",
+    groupBy    = "cell_type",
     bias       = c("TSSEnrichment", "log10(nFrags)"),
     testMethod = "wilcoxon"
 )
