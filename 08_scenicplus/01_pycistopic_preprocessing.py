@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""
-# === Standard Library ===
 import os
 import re
 import pickle
@@ -8,8 +6,6 @@ import subprocess
 import time
 import traceback
 from collections import Counter
-
-# === Scientific Computing ===
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -29,7 +25,6 @@ from pycisTopic.iterative_peak_calling import get_consensus_peaks
 # === External Tools / Genomics ===
 import pyranges as pr
 import scrublet as scr
-
 
 # =============================================================================
 # SHARED CONFIGURATION (identical for every compartment)
