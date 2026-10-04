@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# SCENIC+ Complete Analysis Pipeline
-# - RSS (Regulon Specificity Scores) by Age AND Age_Sex
-# - Correlation Diamond Plot
-# - Network Plotting with 4 TF Modules
+# SCENIC+ Analysis Pipeline
 # =============================================================================
 
 import mudata
