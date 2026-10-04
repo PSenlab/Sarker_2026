@@ -15,7 +15,7 @@
 #        03_atac/09_archr_p2g_analysis.R (hepatocyte run)
 #     3. Hepatocyte zonation markers (one UMAP per gene):
 #          Cyp2f2, Cdh1, Hal, Hamp2, Cyp2e1, Glul, Cyp7a1
-#     4. Hepatocyte SHGS genes by age and sex (one grid per gene):
+#     4. Hepatocyte hep_05 cluster genes by age and sex (one grid per gene):
 #          Cd14, Tox2, Anxa2
 #     5. Ascl1 figure genes by age and sex (one grid per gene):
 #          Ascl1, Mki67, Vwf
@@ -58,7 +58,7 @@ SEX_LEVELS <- c("male", "female")
 
 MARKER_GENES   <- c("Abcc2", "Spp1", "Dcn", "Ptprb", "Cd5l", "Mctp1", "Ms4a4b", "Ebf1")
 ZONATION_GENES <- c("Cyp2f2", "Cdh1", "Hal", "Hamp2", "Cyp2e1", "Glul", "Cyp7a1")
-SHGS_GENES     <- c("Cd14", "Tox2", "Anxa2")
+HEP05_GENES    <- c("Cd14", "Tox2", "Anxa2")    # hep_05 cluster genes
 ASCL1_GENES    <- c("Ascl1", "Mki67", "Vwf")
 P2G_CLUSTERS   <- 1:4
 
@@ -202,13 +202,13 @@ for (g in ZONATION_GENES) {
 
 
 # ==============================================================================
-# STEP 5: HEPATOCYTE SHGS AND ASCL1 FIGURE GENES BY AGE AND SEX
+# STEP 5: HEPATOCYTE HEP_05 AND ASCL1 FIGURE GENES BY AGE AND SEX
 # ==============================================================================
-banner("STEP 5: Hepatocyte SHGS and Ascl1 figure genes by age and sex")
+banner("STEP 5: Hepatocyte hep_05 and Ascl1 figure genes by age and sex")
 
-for (g in c(SHGS_GENES, ASCL1_GENES)) {
+for (g in c(HEP05_GENES, ASCL1_GENES)) {
   message("  ", g)
-  nm  <- paste0("shgs_", safe_name(g), "_")
+  nm  <- paste0("hep_", safe_name(g), "_")
   res <- add_score(hep, g, nm)
   if (is.null(res)) next
   hep <- res
