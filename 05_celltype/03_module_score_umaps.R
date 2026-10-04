@@ -17,6 +17,8 @@
 #          Cyp2f2, Cdh1, Hal, Hamp2, Cyp2e1, Glul, Cyp7a1
 #     4. Hepatocyte SHGS genes by age and sex (one grid per gene):
 #          Cd14, Tox2, Anxa2
+#     5. Ascl1 figure genes by age and sex (one grid per gene):
+#          Ascl1, Mki67, Vwf
 #
 # Input:
 #   - rna_wnn.h5ad (from 04_multiome_integration/02_wnn_integration.py)
@@ -57,6 +59,7 @@ SEX_LEVELS <- c("male", "female")
 MARKER_GENES   <- c("Abcc2", "Spp1", "Dcn", "Ptprb", "Cd5l", "Mctp1", "Ms4a4b", "Ebf1")
 ZONATION_GENES <- c("Cyp2f2", "Cdh1", "Hal", "Hamp2", "Cyp2e1", "Glul", "Cyp7a1")
 SHGS_GENES     <- c("Cd14", "Tox2", "Anxa2")
+ASCL1_GENES    <- c("Ascl1", "Mki67", "Vwf")
 P2G_CLUSTERS   <- 1:4
 
 dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -199,11 +202,11 @@ for (g in ZONATION_GENES) {
 
 
 # ==============================================================================
-# STEP 5: HEPATOCYTE SHGS GENES BY AGE AND SEX
+# STEP 5: HEPATOCYTE SHGS AND ASCL1 FIGURE GENES BY AGE AND SEX
 # ==============================================================================
-banner("STEP 5: Hepatocyte SHGS genes by age and sex")
+banner("STEP 5: Hepatocyte SHGS and Ascl1 figure genes by age and sex")
 
-for (g in SHGS_GENES) {
+for (g in c(SHGS_GENES, ASCL1_GENES)) {
   message("  ", g)
   nm  <- paste0("shgs_", safe_name(g), "_")
   res <- add_score(hep, g, nm)
