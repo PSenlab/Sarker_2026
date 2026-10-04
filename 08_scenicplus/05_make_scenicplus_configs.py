@@ -5,23 +5,6 @@ SCENIC+ Step 5: generate one config.yaml per compartment
 SCENIC+ is a Snakemake pipeline that reads a single config.yaml, so each
 compartment needs its own. This writes them from one template + the shared
 compartment registry, so paths cannot drift between runs.
-
-Consumes (per compartment, from Step 4):
-  <out_dir>/scenicplus_input/<suffix>_cisTopic_obj.pkl
-  <out_dir>/scenicplus_input/<suffix>_GEX_anndata.h5ad
-  <out_dir>/scenicplus_input/region_sets/
-
-Writes:
-  <out_dir>/scenicplus/config.yaml
-  <out_dir>/scenicplus/outs/          (all SCENIC+ outputs land here)
-  <out_dir>/scenicplus/tmp/           (per-compartment temp; see note below)
-
-Usage:
-  python 05_make_scenicplus_configs.py
-  python 05_make_scenicplus_configs.py --run T_ILC myeloid
-  python 05_make_scenicplus_configs.py --check      # verify inputs exist
-  python 05_make_scenicplus_configs.py --n-cpu 32
-
 """
 
 import argparse
