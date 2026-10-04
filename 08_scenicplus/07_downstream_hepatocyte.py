@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# SCENIC+ Analysis Pipeline
+# SCENIC+ Complete Analysis Pipeline
+# - RSS (Regulon Specificity Scores) by Age AND Age_Sex
+# - Correlation Diamond Plot
+# - Network Plotting with 4 TF Modules
 # =============================================================================
 
 import mudata
@@ -148,6 +151,75 @@ heatmap_dotplot(
     save="age_sex_dotplot.pdf"
 )
 print("[OK] Saved: age_sex_dotplot.pdf")
+
+# ---------------------------------------------------------------
+# 2E: Dotplot by Subcluster_Sex (hep 01-07 female, then hep 01-07 male)
+# ---------------------------------------------------------------
+subcluster_order = ['hep_01', 'hep_02', 'hep_03', 'hep_04', 'hep_05', 'hep_06', 'hep_07']
+sex_order = ['female', 'male']
+age_order = ['young', 'mid_age', 'old', 'pre_geriatric', 'geriatric']
+
+desired_order_sub_sex = [f"{s}_{x}" for x in sex_order for s in subcluster_order]
+sub_sex = (scplus_mdata.obs['scRNA_counts:subcluster'].astype(str) + "_" +
+           scplus_mdata.obs['scRNA_counts:sex'].astype(str))
+scplus_mdata.obs['subcluster_sex'] = pd.Categorical(
+    sub_sex.where(sub_sex.isin(desired_order_sub_sex)),   # missing sex -> NaN
+    categories=desired_order_sub_sex,
+    ordered=True
+)
+actual_values = scplus_mdata.obs['subcluster_sex'].dropna().unique()
+filtered_order_sub_sex = [g for g in desired_order_sub_sex if g in actual_values]
+
+heatmap_dotplot(
+    scplus_mudata=scplus_mdata,
+    color_modality="direct_gene_based_AUC",
+    size_modality="direct_region_based_AUC",
+    group_variable="subcluster_sex",
+    group_variable_order=filtered_order_sub_sex,
+    eRegulon_metadata_key="direct_e_regulon_metadata",
+    color_feature_key="Gene_signature_name",
+    size_feature_key="Region_signature_name",
+    feature_name_key="eRegulon_name",
+    sort_data_by="direct_gene_based_AUC",
+    orientation="vertical",
+    figsize=(12, 20),
+    save="subcluster_sex_dotplot.pdf"
+)
+print("[OK] Saved: subcluster_sex_dotplot.pdf")
+
+# ---------------------------------------------------------------
+# 2F: Dotplot by Subcluster_Sex_Age
+#     (hep 01 female young->geriatric, hep 01 male, hep 02 female, ...)
+# ---------------------------------------------------------------
+desired_order_sub_sex_age = [f"{s}_{x}_{a}" for s in subcluster_order
+                             for x in sex_order for a in age_order]
+sub_sex_age = (scplus_mdata.obs['scRNA_counts:subcluster'].astype(str) + "_" +
+               scplus_mdata.obs['scRNA_counts:sex'].astype(str) + "_" +
+               scplus_mdata.obs['scRNA_counts:age'].astype(str))
+scplus_mdata.obs['subcluster_sex_age'] = pd.Categorical(
+    sub_sex_age.where(sub_sex_age.isin(desired_order_sub_sex_age)),
+    categories=desired_order_sub_sex_age,
+    ordered=True
+)
+actual_values = scplus_mdata.obs['subcluster_sex_age'].dropna().unique()
+filtered_order_sub_sex_age = [g for g in desired_order_sub_sex_age if g in actual_values]
+
+heatmap_dotplot(
+    scplus_mudata=scplus_mdata,
+    color_modality="direct_gene_based_AUC",
+    size_modality="direct_region_based_AUC",
+    group_variable="subcluster_sex_age",
+    group_variable_order=filtered_order_sub_sex_age,
+    eRegulon_metadata_key="direct_e_regulon_metadata",
+    color_feature_key="Gene_signature_name",
+    size_feature_key="Region_signature_name",
+    feature_name_key="eRegulon_name",
+    sort_data_by="direct_gene_based_AUC",
+    orientation="vertical",
+    figsize=(30, 20),
+    save="subcluster_sex_age_dotplot.pdf"
+)
+print("[OK] Saved: subcluster_sex_age_dotplot.pdf")
 
 # =============================================================================
 # SECTION 3: RSS Calculations - AGE ONLY
@@ -309,6 +381,26 @@ rss_region_age_sex.to_csv("age_sex_rss_matrix_region.csv")
 print("[OK] Saved: age_sex_rss_region_top25.pdf")
 print("[OK] Saved: age_sex_rss_matrix_region.csv")
 
+# ---------------------------------------------------------------
+# 4C: Per-sex RSS matrices for 08_rss_trajectory_clusters_hepatocyte.R
+#     rows = age (young -> geriatric), columns = TF name
+# ---------------------------------------------------------------
+def split_rss_by_sex(rss, sex):
+    """'03_pre_geriatric_female' rows -> one sex, age-only row names;
+    'Tbx21_direct_+/+_(123g)' columns -> 'Tbx21'."""
+    groups = rss.index.str.replace(r'^\d+_', '', regex=True)
+    keep = groups.str.endswith(f"_{sex}")
+    out = rss.loc[keep].copy()
+    out.index = groups[keep].str.replace(f"_{sex}$", '', regex=True)
+    out.columns = [c.split('_')[0] for c in out.columns]
+    return out.loc[[a for a in desired_order_age if a in out.index]]
+
+for sex in ['male', 'female']:
+    for label, rss in [('gene', rss_gene_age_sex), ('region', rss_region_age_sex)]:
+        fname = f"age_sex_rss_matrix_{label}_{sex}_clean.csv"
+        split_rss_by_sex(rss, sex).to_csv(fname)
+        print(f"[OK] Saved: {fname}")
+
 # =============================================================================
 # SECTION 5: Convert to SCENIC+ Object for Networks
 # =============================================================================
@@ -359,40 +451,38 @@ common = list(
 print(f"[OK] {len(common)} regulons overlap between RSS + AUC (gene & region)")
 
 if len(common) > 0:
+    common = sorted(common)
     auc_gene = auc_gene[common]
     auc_region = auc_region[common]
-    
+
     corr_gene = auc_gene.corr(method='pearson')
     corr_region = auc_region.corr(method='pearson')
-    
-    combined = pd.DataFrame(
-        np.full_like(corr_gene, np.nan),
-        index=corr_gene.index,
-        columns=corr_gene.columns
-    )
-    for i in range(len(combined)):
-        for j in range(len(combined)):
-            combined.iat[i, j] = corr_gene.iat[i, j] if i >= j else corr_region.iat[i, j]
-    
-    link = linkage(combined.fillna(0), method='average')
+
+    # Order regulons first (clustering on the mean of the two correlation
+    # matrices), apply the same order to both, THEN split the triangles:
+    # upper = gene-based, lower = region-based.
+    link = linkage(((corr_gene + corr_region) / 2).fillna(0), method='average')
     order = leaves_list(link)
-    combined = combined.iloc[order, order]
-    
+    corr_gene = corr_gene.iloc[order, order]
+    corr_region = corr_region.iloc[order, order]
+    upper = np.triu(np.ones(corr_gene.shape, dtype=bool), k=1)
+    combined = corr_region.where(~upper, corr_gene)
+
     plt.figure(figsize=(24, 24))
     sns.heatmap(
         combined,
-        cmap='plasma',
+        cmap='RdYlBu_r',
         vmin=-1,
         vmax=1,
         square=True,
-        cbar_kws={'label': 'Pearson correlation'}
+        cbar_kws={'label': 'Pearson correlation (r)'}
     )
     plt.plot([0, len(combined)], [0, len(combined)], color='black', lw=1)
     plt.text(len(combined)*0.05, len(combined)*0.93, 'Region-based',
-             color='white', weight='bold', fontsize=14)
+             color='black', weight='bold', fontsize=14)
     plt.text(len(combined)*0.70, len(combined)*0.08, 'Gene-based',
-             color='white', weight='bold', fontsize=14)
-    plt.title('Joint correlation: Region-based (upper) vs Gene-based (lower)', fontsize=16)
+             color='black', weight='bold', fontsize=14)
+    plt.title('Joint correlation: Gene-based (upper) vs Region-based (lower)', fontsize=16)
     plt.tight_layout()
     plt.savefig('combined_correlation_gene_vs_region_diamond.pdf', bbox_inches='tight', dpi=300)
     plt.show()
@@ -799,12 +889,15 @@ print("    - Heps_age.pdf")
 print("    - Heps_sex_horizontal.pdf")
 print("    - celltype2.pdf")
 print("    - age_sex_dotplot.pdf")
+print("    - subcluster_sex_dotplot.pdf")
+print("    - subcluster_sex_age_dotplot.pdf")
 print("  RSS (Age only):")
 print("    - age_rss_gene_top30.pdf / .csv")
 print("    - age_rss_region_top25.pdf / .csv")
 print("  RSS (Age_Sex):")
 print("    - age_sex_rss_gene_top30.pdf / .csv")
 print("    - age_sex_rss_region_top25.pdf / .csv")
+print("    - age_sex_rss_matrix_{gene,region}_{male,female}_clean.csv (input for 08)")
 print("  Correlation:")
 print("    - combined_correlation_gene_vs_region_diamond.pdf")
 print("  Networks:")
