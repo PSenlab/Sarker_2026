@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# SCENIC+ Downstream: eRegulon Dot Plots for the Non-Hepatocyte Compartments
+# SCENIC+ Downstream: eRegulon Dot Plots for the Atlas and Non-Hepatocyte Compartments
 # =============================================================================
 #
 # Description:
@@ -12,7 +12,7 @@
 #   Color = direct gene-based AUC, size = direct region-based AUC (same
 #   settings as 07_downstream_hepatocyte.py).
 #
-#   Compartments: T_ILC, endothelial_Kupffer02, myeloid
+#   Compartments: all_celltypes, T_ILC, endothelial_Kupffer02, myeloid
 #   (the hepatocyte compartment is handled by 07_downstream_hepatocyte.py)
 #
 # Input (per compartment, from Step 6):
@@ -24,7 +24,7 @@
 #
 # Usage:
 #   python 09_downstream_other_compartments.py
-#   python 09_downstream_other_compartments.py --run T_ILC myeloid
+#   python 09_downstream_other_compartments.py --run all_celltypes T_ILC
 #
 # =============================================================================
 
@@ -48,7 +48,16 @@ AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
 # out_dir / suffix must match Steps 1-5.
 # group_col: subcluster column in the compartment RNA object (Step 4 input);
 #            it appears in the SCENIC+ mudata as "scRNA_counts:<group_col>".
+# order:     column order of the subcluster dot plot (None = alphabetical)
 COMPARTMENTS = {
+    "all_celltypes": dict(
+        out_dir="outs_all_celltypes",
+        suffix="all_celltypes",
+        group_col="cell_type",
+        order=["cholangiocyte 01", "cholangiocyte 02", "endothelial", "Kupffer 02",
+               "hepatocyte", "Kupffer 01", "non-resident myeloid", "mesenchymal",
+               "B cells", "T/ILC cells"],
+    ),
     "T_ILC": dict(
         out_dir="outs_T_ILC",
         suffix="T_ILC",
@@ -82,7 +91,8 @@ def find_group_column(obs_columns, group_col):
     (from the Step 1 cell_data TSV) as fallback."""
     for col in (f"scRNA_counts:{group_col}",
                 "scRNA_counts:celltype",
-                "scATAC_counts:celltype"):
+                "scATAC_counts:celltype",
+                "scATAC_counts:cell_type"):
         if col in obs_columns:
             return col
     raise KeyError(f"no subcluster column found (looked for "
@@ -112,7 +122,10 @@ def draw(scplus_mdata, group_variable, n_eregulons, out_pdf, order=None):
         save=out_pdf,
     )
     if order is not None:
-        kwargs["group_variable_order"] = [g for g in order if g in set(groups)]
+        extra = sorted(set(groups) - set(order))
+        if extra:
+            print(f"  [WARN] groups not in the configured order (appended): {extra}")
+        kwargs["group_variable_order"] = [g for g in order if g in set(groups)] + extra
     heatmap_dotplot(**kwargs)
     print(f"  [OK] {out_pdf}")
 
@@ -146,7 +159,8 @@ def run_compartment(name, spec, base_dir):
     group_variable = find_group_column(scplus_mdata.obs.columns, spec["group_col"])
     print(f"  subcluster column: {group_variable}")
     draw(scplus_mdata, group_variable, n_eregulons,
-         os.path.join(fig_dir, f"{spec['suffix']}_subcluster_dotplot.pdf"))
+         os.path.join(fig_dir, f"{spec['suffix']}_subcluster_dotplot.pdf"),
+         order=spec.get("order"))
 
     # 2. by age
     draw(scplus_mdata, "scRNA_counts:age", n_eregulons,
