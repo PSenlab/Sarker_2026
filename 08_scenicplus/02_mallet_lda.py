@@ -3,12 +3,6 @@
 # SCENIC+ Step 2: MALLET LDA Model Fitting — ALL COMPARTMENTS
 # ==============================================================================
 #
-# Description:
-#   Fits LDA topic models with MALLET to each compartment's filtered cisTopic
-#   object. Multiple topic counts are fitted per compartment; the best model is
-#   chosen in Step 3 from the evaluation metrics (Arun / Cao-Juan crossover,
-#   Mimno coherence, log-likelihood).
-#
 # Input  (per compartment, from Step 1):
 #   <out_dir>/cisTopicObject_filtered_annotated_<suffix>.pkl
 #
@@ -26,14 +20,6 @@
 #   python 02_mallet_lda.py --run myeloid Hepatocyte
 #   python 02_mallet_lda.py --force              # refit even if models exist
 #
-# NOTE on duplicate model files
-#   run_cgs_models_mallet(save_path=...) ALREADY writes each model into
-#   save_path. Re-pickling the returned models under a second filename in the
-#   same directory produces two files per topic count, which then distorts the
-#   Step 3 evaluation curves (the same model counted twice) and is why a
-#   dedup-by-topic-count step was needed downstream. This script writes the
-#   models EXACTLY ONCE -- see RESAVE_MODELS below.
-# ==============================================================================
 
 import argparse
 import os
