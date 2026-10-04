@@ -11,9 +11,6 @@
 #   been copied in as:
 #       scplus_pipeline/Snakemake/config/config.yaml
 #
-# Usage:
-#   cd scplus_pipeline/Snakemake
-#   python path/to/06_run_scenicplus.py
 #
 # ==============================================================================
 
