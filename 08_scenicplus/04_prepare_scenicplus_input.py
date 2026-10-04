@@ -2,31 +2,7 @@
 """
 SCENIC+ Step 4: RNA-ATAC Integration Prep — ALL COMPARTMENTS
 =============================================================
-Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment: reconstructs
-barcodes, intersects cells, orders both objects identically, and writes the
-SCENIC+ input bundle.
-
-Consumes
---------
-  <out_dir>/cisTopicObject_lda_complete.pkl     (Step 3)
-  <out_dir>/region_sets/                        (Step 3)
-  <rna_h5ad>                                    (compartment RNA object)
-
-Produces
---------
-  <out_dir>/scenicplus_input/<suffix>_GEX_anndata.h5ad
-  <out_dir>/scenicplus_input/<suffix>_cisTopic_obj.pkl
-  <out_dir>/scenicplus_input/region_sets/
-
-Usage
------
-  python 04_prepare_scenicplus_input.py                  # all compartments
-  python 04_prepare_scenicplus_input.py --run T_ILC
-  python 04_prepare_scenicplus_input.py --run myeloid --rna other.h5ad
-  python 04_prepare_scenicplus_input.py --dry-run        # report overlap, write nothing
-
-License: MIT
-"""
+#Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment
 
 import argparse
 import os
