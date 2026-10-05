@@ -6,9 +6,9 @@
 # Description:
 #   Analyzes hepatocyte sub-cluster composition and zonation patterns across
 #   aging in mouse liver, stratified by sex. Includes differential expression,
-#   GSEA prerank (Reactome), compositional analysis with ANOVA, gene module
-#   scoring for zonation assignment, and cell-level + sample-level zonation
-#   comparisons across age groups.
+#   compositional analysis with ANOVA, gene module scoring for zonation
+#   assignment, and cell-level + sample-level zonation comparisons across age
+#   groups.
 #
 # Input:
 #   - Annotated AnnData (.h5ad) with cell_type, subcluster (sub-clusters),
@@ -18,7 +18,6 @@
 #   Figures:
 #     - WNN-UMAP by sub-cluster + per-cluster highlight grids
 #     - DE dotplot (Wilcoxon)
-#     - GSEA Reactome bubble plot
 #     - Sub-cluster proportion boxplots and stacked barplots by age
 #     - Zonation module score heatmap
 #     - Zonation UMAP grid, boxplots, stacked barplots
@@ -26,8 +25,7 @@
 #     - Sample-level zonation boxplots with ANOVA
 #
 #   Tables:
-#     - DE results (all genes, per cluster)
-#     - GSEA results per cluster
+#     - DE results (all genes, all clusters)
 #     - Sub-cluster proportions and ANOVA
 #     - Zonation proportions and ANOVA
 #     - Sample-level zonation scores
@@ -36,14 +34,13 @@
 #   0. Load and subset to Hepatocytes
 #   1. WNN-UMAP by subcluster + per-cluster highlight grids
 #   2. Differential expression (Wilcoxon) + dotplot
-#   3. GSEA prerank (Reactome) + bubble plot
-#   4. Subcluster proportions and ANOVA by sex
-#   5. Boxplots of subcluster proportions by age
-#   5b. Stacked barplots of subcluster proportions by age
-#   6. Gene module scoring and heatmap (global)
-#   7. Hepatocyte zonation: assignment, UMAP grid, boxplots, stacked bars
-#   8. Per-subset zonation violin plots (cell-level) + ANOVA
-#   9. Per-subset zonation boxplots (sample-level means) + ANOVA
+#   3. Subcluster proportions and ANOVA by sex
+#   4. Boxplots of subcluster proportions by age
+#   4b. Stacked barplots of subcluster proportions by age
+#   5. Gene module scoring and heatmap (global)
+#   6. Hepatocyte zonation: assignment, UMAP grid, boxplots, stacked bars
+#   7. Per-subset zonation violin plots (cell-level) + ANOVA
+#   8. Per-subset zonation boxplots (sample-level means) + ANOVA
 #
 # Reference:
 #   Sarker et al. (2026) Nature Cell Biology
@@ -55,12 +52,10 @@ import numpy as np
 import pandas as pd
 import anndata as ad
 import scanpy as sc
-import gseapy as gp
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 from scipy.stats import f_oneway
 from statsmodels.stats.multitest import multipletests
 
@@ -298,252 +293,12 @@ print(f"  [OK] {fname}")
 
 
 # ==============================================================================
-# 3. GSEA PRERANK (REACTOME) + BUBBLE PLOT
+# 3. CELLTYPE2 PROPORTIONS AND ANOVA BY SEX
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 3: GSEA prerank (Reactome) + bubble plot")
-print("=" * 70)
-
-# 3a. Save per-cluster DEG files
-GSEA_DIR = f"{RESULTS_DIR}/GSEA"
-os.makedirs(GSEA_DIR, exist_ok=True)
-
-for cluster in sorted(df_deg["group"].unique()):
-    cluster_df = df_deg[df_deg["group"] == cluster][
-        ["names", "scores", "pvals", "pvals_adj", "logfoldchanges"]
-    ].copy()
-    cluster_df.columns = ["gene", "score", "pval", "pval_adj", "logfoldchange"]
-    out_path = f"{GSEA_DIR}/differential_expression_{cluster}.csv"
-    cluster_df.to_csv(out_path, index=False)
-    print(f"  [OK] {out_path}")
-
-# 3b. Run GSEA prerank for hep_01 through hep_07
-for i in range(1, 8):
-    hep = f"hep_0{i}"
-    file_path = f"{GSEA_DIR}/differential_expression_{hep}.csv"
-    if not os.path.exists(file_path):
-        print(f"  [SKIP] DEG file not found for {hep}")
-        continue
-
-    print(f"  Running GSEA prerank for {hep}...")
-    df_gsea = pd.read_csv(file_path)
-
-    ranked_genes = df_gsea[["gene", "score"]].dropna()
-    ranked_genes.columns = ["Gene", "Score"]
-    ranked_genes["Gene"] = ranked_genes["Gene"].str.upper()
-    ranked_genes["Score"] += np.random.normal(0, 1e-6, len(ranked_genes))
-    ranked_genes = ranked_genes.sort_values("Score", ascending=False)
-
-    gsea_results = gp.prerank(
-        rnk=ranked_genes,
-        gene_sets="Reactome_Pathways_2024",
-        organism="Human",
-        permutation_num=1000,
-        min_size=5,
-        max_size=2000,
-        outdir=f"{GSEA_DIR}/GSEA_results_0{i}",
-        seed=42,
-    )
-
-    gsea_results_df = gsea_results.res2d
-
-    # Extract Overlap_N and numeric Tag %
-    if "Tag %" in gsea_results_df.columns:
-        tag_raw = gsea_results_df["Tag %"].astype(str)
-        if tag_raw.str.contains("/").any():
-            parts = tag_raw.str.extract(r"(\d+)/(\d+)")
-            gsea_results_df["Overlap_N"] = parts[0].astype(float)
-            gsea_results_df["Tag %_numeric"] = (
-                parts[0].astype(float) / parts[1].astype(float) * 100
-            )
-        else:
-            gsea_results_df["Tag %_numeric"] = (
-                tag_raw.str.replace("%", "", regex=False).astype(float)
-            )
-
-    # Convert Gene % to numeric
-    if "Gene %" in gsea_results_df.columns:
-        gene_raw = gsea_results_df["Gene %"].astype(str)
-        if gene_raw.str.contains("/").any():
-            parts = gene_raw.str.extract(r"(\d+)/(\d+)")
-            gsea_results_df["Gene %_numeric"] = (
-                parts[0].astype(float) / parts[1].astype(float) * 100
-            )
-        else:
-            gsea_results_df["Gene %_numeric"] = (
-                gene_raw.str.replace("%", "", regex=False).astype(float)
-            )
-
-    out_path = f"{GSEA_DIR}/GSEA_Reactome_2025_hep_0{i}.csv"
-    gsea_results_df.to_csv(out_path, index=False)
-    print(f"  [OK] {out_path}")
-
-# 3c. Bubble plot - top 10 upregulated pathways per cluster
-gsea_combined = []
-for i in range(1, 8):
-    cluster_id = f"hep_0{i}"
-    file_path = f"{GSEA_DIR}/GSEA_Reactome_2025_hep_0{i}.csv"
-    if not os.path.exists(file_path):
-        continue
-
-    df_gp = pd.read_csv(file_path)
-
-    if "Overlap_N" not in df_gp.columns and "Tag %" in df_gp.columns:
-        tag_raw = df_gp["Tag %"].astype(str)
-        if tag_raw.str.contains("/").any():
-            df_gp["Overlap_N"] = tag_raw.str.extract(r"(\d+)/")[0].astype(float)
-        else:
-            df_gp["Overlap_N"] = np.nan
-
-    if "Gene %_numeric" in df_gp.columns:
-        df_gp["Gene_pct"] = df_gp["Gene %_numeric"]
-    elif "Gene %" in df_gp.columns:
-        gene_raw = df_gp["Gene %"].astype(str)
-        if gene_raw.str.contains("/").any():
-            parts = gene_raw.str.extract(r"(\d+)/(\d+)")
-            df_gp["Gene_pct"] = parts[0].astype(float) / parts[1].astype(float) * 100
-        else:
-            df_gp["Gene_pct"] = gene_raw.str.replace("%", "", regex=False).astype(float)
-    else:
-        df_gp["Gene_pct"] = np.nan
-
-    # Filter: NOM p-val < 0.05, Overlap_N > 4, NES > 0
-    df_gp = df_gp[
-        (df_gp["NOM p-val"] < 0.05)
-        & (df_gp["Overlap_N"] > 4)
-        & (df_gp["NES"] > 0)
-    ]
-    if df_gp.empty:
-        print(f"  [SKIP] No pathways passed filters for {cluster_id}")
-        continue
-
-    df_gp = df_gp.sort_values("NES", ascending=False).head(10)
-    df_gp["Cluster"] = cluster_id
-    gsea_combined.append(df_gp)
-
-if gsea_combined:
-    plot_df = pd.concat(gsea_combined, ignore_index=True)
-
-    MAX_CHARS = 60
-    plot_df["y_label"] = plot_df["Term"].apply(
-        lambda x: x[:MAX_CHARS] + "..." if len(str(x)) > MAX_CHARS else x
-    )
-
-    # Deduplicate identical pathway names across clusters
-    seen = {}
-    unique_labels = []
-    for _, row in plot_df.iterrows():
-        label = row["y_label"]
-        if label in seen:
-            seen[label] += 1
-            label = label + " " * seen[label]
-        else:
-            seen[label] = 0
-        unique_labels.append(label)
-    plot_df["y_label"] = unique_labels
-
-    plot_df["Cluster_rank"] = plot_df["Cluster"].map(
-        {c: idx for idx, c in enumerate(HEP_ORDER)}
-    )
-    plot_df = plot_df.sort_values(
-        ["Cluster_rank", "NES"], ascending=[True, False],
-    ).reset_index(drop=True)
-
-    SIZE_SCALE = 30
-    plot_df["bubble_size"] = plot_df["Gene_pct"] * SIZE_SCALE
-
-    fig, ax = plt.subplots(figsize=(6.5, max(6, 0.25 * len(plot_df))))
-
-    ax.scatter(
-        plot_df["NES"], plot_df["y_label"],
-        s=plot_df["bubble_size"],
-        c=plot_df["Cluster"].map(CELLTYPE2_PALETTE),
-        edgecolors="black", linewidths=0.5, alpha=0.85,
-        zorder=3, clip_on=False,
-    )
-
-    for _, row in plot_df.iterrows():
-        ax.hlines(
-            y=row["y_label"], xmin=0, xmax=row["NES"],
-            color="gray", alpha=0.3, linestyle="--", linewidth=0.6, zorder=1,
-        )
-
-    prev_cluster = None
-    for idx_row, row in plot_df.iterrows():
-        if prev_cluster is not None and row["Cluster"] != prev_cluster:
-            ax.axhline(
-                y=idx_row - 0.5, color="lightgray", linewidth=1.2,
-                linestyle="-", zorder=0,
-            )
-        prev_cluster = row["Cluster"]
-
-    nes_min = plot_df["NES"].min()
-    nes_max = plot_df["NES"].max()
-    nes_range = nes_max - nes_min if nes_max > nes_min else 1.0
-    ax.set_xlim(nes_min - 0.08 * nes_range, nes_max + 0.08 * nes_range)
-    ax.set_ylim(len(plot_df) - 0.5, -0.5)
-    ax.margins(y=0.02)
-
-    ax.axvline(x=0, color="red", linestyle="--", linewidth=1, alpha=0.6)
-    ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=12)
-    ax.set_ylabel("")
-    ax.set_title(
-        "Top 10 Upregulated Reactome Pathways per Hepatocyte Sub-cluster\n"
-        "(NOM p-val < 0.05, Overlap > 4, NES > 0)",
-        fontsize=13, fontweight="bold",
-    )
-    ax.tick_params(axis="y", labelsize=8)
-    sns.despine(ax=ax, left=True)
-
-    plotted_clusters = plot_df["Cluster"].unique()
-    cluster_handles = [
-        Line2D(
-            [0], [0], marker="o", color="w", label=c,
-            markerfacecolor=CELLTYPE2_PALETTE[c], markersize=10,
-            markeredgecolor="black", markeredgewidth=0.5,
-        )
-        for c in plotted_clusters
-    ]
-
-    gene_pct_values = [5, 10, 20]
-    size_handles = [
-        Line2D(
-            [0], [0], marker="o", color="w", label=f"{v}%",
-            markerfacecolor="gray", markeredgecolor="black",
-            markeredgewidth=0.5, markersize=np.sqrt(v * SIZE_SCALE) * 0.8,
-        )
-        for v in gene_pct_values
-    ]
-
-    first_legend = ax.legend(
-        handles=cluster_handles, title="Cluster",
-        bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False,
-    )
-    ax.add_artist(first_legend)
-    ax.legend(
-        handles=size_handles, title="Gene %",
-        bbox_to_anchor=(1.02, 0.55), loc="upper left", frameon=False,
-    )
-
-    plt.tight_layout()
-    fname = f"{FIGURES_DIR}/gsea_reactome_bubble_plot.pdf"
-    fig.savefig(fname, bbox_inches="tight", dpi=300)
-    fig.savefig(fname.replace(".pdf", ".png"), bbox_inches="tight", dpi=300)
-    plt.close(fig)
-    print(f"  [OK] {fname}")
-else:
-    print("  [SKIP] No clusters had significant pathways")
-
-
-# ==============================================================================
-# 4. CELLTYPE2 PROPORTIONS AND ANOVA BY SEX
-# ==============================================================================
-
-print()
-print("=" * 70)
-print("ANALYSIS 4: Subcluster proportions and ANOVA")
+print("ANALYSIS 3: Subcluster proportions and ANOVA")
 print("=" * 70)
 
 counts_all = (
@@ -600,12 +355,12 @@ print(anova_combined.sort_values("adj_p").head(20).to_string(index=False))
 
 
 # ==============================================================================
-# 5. BOXPLOTS - CELLTYPE2 PROPORTIONS BY AGE
+# 4. BOXPLOTS - CELLTYPE2 PROPORTIONS BY AGE
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 5: Boxplots (subcluster proportions by age)")
+print("ANALYSIS 4: Boxplots (subcluster proportions by age)")
 print("=" * 70)
 
 # Per-sex counts + ANOVA, then a single side-by-side figure
@@ -738,12 +493,12 @@ print(f"  [OK] {fname}")
 
 
 # ==============================================================================
-# 5b. STACKED BARPLOTS - CELLTYPE2 PROPORTIONS BY AGE
+# 4b. STACKED BARPLOTS - CELLTYPE2 PROPORTIONS BY AGE
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 5b: Stacked barplots (subcluster by age)")
+print("ANALYSIS 4b: Stacked barplots (subcluster by age)")
 print("=" * 70)
 
 data = adata.obs[[AGE_COL, SEX_COL, CELLTYPE2_COL]].copy()
@@ -788,12 +543,12 @@ for sex in ["male", "female"]:
 
 
 # ==============================================================================
-# 6. GENE MODULE SCORING AND HEATMAP (GLOBAL)
+# 5. GENE MODULE SCORING AND HEATMAP (GLOBAL)
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 6: Gene module scoring (global, informs zonation)")
+print("ANALYSIS 5: Gene module scoring (global, informs zonation)")
 print("=" * 70)
 
 score_name_global = "Zonation_score_ModuleScore"
@@ -832,15 +587,15 @@ print(f"  [OK] {fname}")
 
 
 # ==============================================================================
-# 7. HEPATOCYTE ZONATION: ASSIGNMENT, UMAP GRID, BOXPLOTS, STACKED BARS
+# 6. HEPATOCYTE ZONATION: ASSIGNMENT, UMAP GRID, BOXPLOTS, STACKED BARS
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 7: Hepatocyte zonation (assignment, UMAP, stats)")
+print("ANALYSIS 6: Hepatocyte zonation (assignment, UMAP, stats)")
 print("=" * 70)
 
-# 7a. Assign zonation labels
+# 6a. Assign zonation labels
 adata.obs[ZONATION_COL] = (
     adata.obs[CELLTYPE2_COL].replace(HEPATOCYTE_ZONATION_MAP).astype("category")
 )
@@ -850,7 +605,7 @@ adata.obs[ZONATION_COL] = adata.obs[ZONATION_COL].cat.set_categories(
 adata.uns[f"{ZONATION_COL}_colors"] = [ZONATION_PALETTE[z] for z in ZONE_ORDER]
 print(adata.obs[ZONATION_COL].value_counts().to_string())
 
-# 7b. Zonation UMAP grid (age x sex)
+# 6b. Zonation UMAP grid (age x sex)
 x_coords = adata.obsm["X_wnn"][:, 0]
 y_coords = adata.obsm["X_wnn"][:, 1]
 xlim_global = (x_coords.min(), x_coords.max())
@@ -892,7 +647,7 @@ fig.savefig(fname, bbox_inches="tight")
 plt.close(fig)
 print(f"  [OK] {fname}")
 
-# 7c. Zonation proportions and ANOVA
+# 6c. Zonation proportions and ANOVA
 zon_counts = (
     adata.obs.groupby([SAMPLE_COL, ZONATION_COL])
     .size().reset_index(name="cell_count")
@@ -924,7 +679,7 @@ out = f"{RESULTS_DIR}/zonation_anova_by_sex.csv"
 zon_anova_df.to_csv(out, index=False)
 print(f"  [OK] {out}")
 
-# 7d. Zonation boxplots
+# 6d. Zonation boxplots
 for sex in zon_counts[SEX_COL].dropna().unique():
     df_sex = zon_counts[zon_counts[SEX_COL] == sex]
     present_ages = [a for a in AGE_ORDER if a in df_sex[AGE_COL].dropna().unique()]
@@ -958,7 +713,7 @@ for sex in zon_counts[SEX_COL].dropna().unique():
     plt.close(fig)
     print(f"  [OK] {fname}")
 
-# 7e. Zonation stacked barplots
+# 6e. Zonation stacked barplots
 for sex in zon_counts[SEX_COL].dropna().unique():
     sub = zon_counts[zon_counts[SEX_COL] == sex]
     for value_col, ylabel, tag in [
@@ -998,15 +753,15 @@ for sex in zon_counts[SEX_COL].dropna().unique():
 
 
 # ==============================================================================
-# 8. PER-SUBSET ZONATION: CELL-LEVEL VIOLIN PLOTS + ANOVA
+# 7. PER-SUBSET ZONATION: CELL-LEVEL VIOLIN PLOTS + ANOVA
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 8: Cell-level zonation violin plots + ANOVA")
+print("ANALYSIS 7: Cell-level zonation violin plots + ANOVA")
 print("=" * 70)
 
-# 8a. Score per (age x sex) subset
+# 7a. Score per (age x sex) subset
 score_col = "Zonation_score"
 cell_parts = []
 
@@ -1036,7 +791,7 @@ df_cells[SEX_COL] = pd.Categorical(df_cells[SEX_COL], categories=SEX_ORDER, orde
 
 present_ct = [ct for ct in HEP_ORDER if ct in df_cells[CELLTYPE2_COL].unique()]
 
-# 8b. Sample-level means and ANOVA
+# 7b. Sample-level means and ANOVA
 df_sample = (
     df_cells
     .groupby([SAMPLE_COL, CELLTYPE2_COL, AGE_COL, SEX_COL])["zonation_score"]
@@ -1077,7 +832,7 @@ print(f"  [OK] {anova_xlsx_out}")
 
 print(zonation_anova_df.to_string(index=False))
 
-# 8c. Violin plot with ANOVA stars
+# 7c. Violin plot with ANOVA stars
 xmin = np.nanmin(df_cells["zonation_score"])
 xmax = np.nanmax(df_cells["zonation_score"])
 xrng = xmax - xmin if np.isfinite(xmax - xmin) else 1.0
@@ -1176,12 +931,12 @@ print(f"  [OK] {fname}")
 
 
 # ==============================================================================
-# 9. PER-SUBSET ZONATION: SAMPLE-LEVEL BOXPLOTS + ANOVA STARS
+# 8. PER-SUBSET ZONATION: SAMPLE-LEVEL BOXPLOTS + ANOVA STARS
 # ==============================================================================
 
 print()
 print("=" * 70)
-print("ANALYSIS 9: Sample-level zonation boxplots + ANOVA stars")
+print("ANALYSIS 8: Sample-level zonation boxplots + ANOVA stars")
 print("=" * 70)
 
 out_csv = f"{RESULTS_DIR}/zonation_score_sample_means.csv"
