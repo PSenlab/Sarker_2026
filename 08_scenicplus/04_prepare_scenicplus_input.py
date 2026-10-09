@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-SCENIC+ Step 4: RNA-ATAC Integration Prep — ALL COMPARTMENTS
+SCENIC+ Step 4: RNA-ATAC Integration Prep - ALL COMPARTMENTS
 =============================================================
-#Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment
+Aligns matched RNA (GEX) and ATAC (cisTopic) data per compartment
+"""
 
 import argparse
 import os
@@ -350,7 +351,7 @@ def save_outputs(cfg, adata, cistopic_obj):
 
 def print_final_summary(cfg, adata, cistopic_obj):
     print("\n" + "=" * 60)
-    print(f"[STATS] FINAL SUMMARY — {cfg.name}")
+    print(f"[STATS] FINAL SUMMARY - {cfg.name}")
     print("=" * 60)
     print(f"\n GEX AnnData: {adata.n_obs} cells x {adata.n_vars} genes")
     print(f"   obs columns: {adata.obs.columns.tolist()}")
