@@ -60,7 +60,7 @@ cat("========================================================================\n\
 # ------------------------------------------------------------------------------
 
 # Project paths
-proj_path      <- "path/to/ArchR_Projects/Step6_Xwnn_UMAP"
+proj_path      <- "path/to/ArchR_Projects/Step8_Imputed"   # 80 kb bigWigs from 03_atac/06_archr_bigwigs_80kb.R
 group_dir      <- file.path(proj_path, "GroupBigWigs", "AgeSexCelltype__tile80k")
 manifest_path  <- file.path(group_dir, "AgeSexCelltype.bigwig_manifest_tile80k.tsv")
 outdir         <- "path/to/output/compartment_main_heatmap"
