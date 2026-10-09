@@ -1189,7 +1189,7 @@ def run_compartment(cfg, chromsizes, run_preprocessing=True, run_annotation=True
         else:
             fragments_dict = generate_fragments_dict(cfg)
 
-        # Step 3 — compartment restriction enters here
+        # Step 3 - compartment restriction enters here
         cell_data, filtered_fragments_dict = load_and_process_cell_data(cfg, fragments_dict)
 
         # Step 4
