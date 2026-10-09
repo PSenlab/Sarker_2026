@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# ArchR browser-track coverage plots — liver aging multiome
+# ArchR browser-track coverage plots - liver aging multiome
 # ==============================================================================
 # Generates ReadsInTSS-normalized coverage tracks over marker/zonation genes
 # for two groupings of the same ArchR project:
