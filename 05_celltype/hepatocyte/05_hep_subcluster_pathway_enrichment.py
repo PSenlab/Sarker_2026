@@ -16,7 +16,7 @@
 #   matching figure panels (g) hep_01, (h) hep_02, (i) hep_04.
 #
 # Input:
-#   - integrated_scvi.h5ad - canonical AnnData (for hepatocyte background)
+#   - rna_wnn.h5ad - canonical AnnData (for hepatocyte background)
 #   - Per-cluster gene CSVs from 04_hep_subcluster_pseudobulk_deseq2_lrt.R STEP 4:
 #       hep_01_cluster_1_genes_cluster.csv
 #       hep_01_cluster_2_genes_cluster.csv
@@ -58,7 +58,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # CONFIGURATION - UPDATE THESE PATHS
 # ==============================================================================
 
-ADATA_PATH    = "integrated_scvi.h5ad"
+ADATA_PATH    = "rna_wnn.h5ad"
 
 # Directory containing the per-cluster CSVs from STEP 4 of the R pipeline
 CSV_INPUT_DIR = "."
