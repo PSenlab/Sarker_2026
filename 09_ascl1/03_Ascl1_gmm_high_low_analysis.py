@@ -8,15 +8,13 @@
 #   populations using a 2-component Gaussian Mixture Model (GMM) fit to
 #   the non-zero expression distribution, validates bimodality via AIC/BIC
 #   model selection, then performs downstream differential expression
-#   (Wilcoxon) and Reactome GSEA between the two populations.
+#   (Wilcoxon) between the two populations.
 #
 # Pipeline:
 #   1. Load data and subset to female hepatocytes
 #   2. GMM classification (Ascl1-High vs Ascl1-Low) among Ascl1+ cells
 #   3. GMM High/Low count dot plots for selected subclusters
 #   4. Wilcoxon DE: Ascl1-High vs Ascl1-Low
-#   5. GSEA Reactome Pathways 2024
-#   6. GSEA dot plots (top 30 positive NES, top 30 negative NES)
 #
 # Input:
 #   - rna_wnn.h5ad  (annotated AnnData with cell_type, subcluster,
@@ -38,7 +36,6 @@ import scanpy as sc
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
-import gseapy as gp
 from sklearn.mixture import GaussianMixture
 
 warnings.filterwarnings("ignore")
@@ -80,10 +77,6 @@ AGE_ALIASES   = {"midage": "mid_age", "pregeriatric": "pre_geriatric"}
 PVAL_THRESHOLD       = 0.05
 LOGFC_STRONG_CUTOFF  = 0.5
 
-# GSEA filters
-NOM_P_CUTOFF  = 0.05
-TOP_N_GSEA    = 30
-
 
 # ==============================================================================
 # HELPERS
@@ -111,76 +104,6 @@ def extract_gene_expression(adata, gene):
     if hasattr(expr, "toarray"):
         expr = expr.toarray()
     return np.asarray(expr).ravel()
-
-
-def plot_gsea_dotplot(df, direction, outfile):
-    """
-    Generic dot plot for the top N Reactome pathways of one NES direction.
-    df must contain columns: term_clean, NES, Gene %, NOM p-val.
-    direction: "positive" or "negative" (drives title wording only).
-    """
-    if df.empty:
-        print(f"  [SKIP] No pathways to plot for {direction} NES")
-        return
-
-    df = df.copy()
-    df["pval_size"] = -np.log10(df["NOM p-val"].replace(0, 1e-10))
-
-    min_s, max_s = 60, 400
-    pmin, pmax = df["pval_size"].min(), df["pval_size"].max()
-    if pmax > pmin:
-        df["size_scaled"] = (
-            min_s + (df["pval_size"] - pmin) / (pmax - pmin) * (max_s - min_s)
-        )
-    else:
-        df["size_scaled"] = (min_s + max_s) / 2
-
-    # Sort so most positive NES is at top (or least negative at top for negative)
-    df = df.sort_values("NES", ascending=False)
-    df["term_clean"] = pd.Categorical(
-        df["term_clean"], categories=df["term_clean"], ordered=True,
-    )
-    nes_min, nes_max = df["NES"].min(), df["NES"].max()
-
-    label_map = {
-        "positive": "Enriched in Ascl1-High (NES > 0)",
-        "negative": "Enriched in Ascl1-Low (NES < 0)",
-    }
-
-    plt.figure(figsize=(14, 7))
-    ax = sns.scatterplot(
-        data=df, x="NES", y="term_clean",
-        size="pval_size", hue="Gene %",
-        palette="RdYlBu_r", sizes=(min_s, max_s),
-        edgecolor="black", linewidth=0.6,
-    )
-    ax.set_xlim(nes_min - 0.05, nes_max + 0.05)
-    plt.axvline(0, color="gray", lw=1)
-    plt.xlabel("Normalized enrichment score (NES)", fontsize=12, weight="bold")
-    plt.ylabel("Reactome pathway", fontsize=12, weight="bold")
-    plt.title(
-        f"Top {TOP_N_GSEA} Reactome pathways - {label_map[direction]}\n"
-        f"Female hepatocyte CT2 subset (GMM High vs Low)   "
-        f"NES range: {nes_min:.2f} to {nes_max:.2f}",
-        fontsize=14, weight="bold",
-    )
-
-    norm = plt.Normalize(df["Gene %"].min(), df["Gene %"].max())
-    sm = plt.cm.ScalarMappable(cmap="RdYlBu_r", norm=norm)
-    sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax)
-    cbar.set_label("Gene %", fontsize=11, weight="bold")
-
-    ax.legend(
-        title="-log10(NOM p-val)",
-        bbox_to_anchor=(1.45, 1), loc="upper left",
-        frameon=True, fontsize=9, title_fontsize=10,
-    )
-
-    plt.tight_layout()
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"  [OK] {outfile}")
 
 
 # ==============================================================================
@@ -511,138 +434,6 @@ sig_genes.to_csv(
     index=False,
 )
 print(f"\n  [OK] {RES_DIR}/DE_Ascl1_GMM_high_vs_low_female_hep_CT2subset.csv")
-
-
-# ==============================================================================
-# 5. GSEA: REACTOME PATHWAYS 2024
-# ==============================================================================
-
-banner("STEP 5: GSEA Reactome Pathways 2024")
-
-csv_path = RES_DIR / "DE_Ascl1_GMM_high_vs_low_female_hep_CT2subset.csv"
-results_df = pd.read_csv(csv_path)
-results_df = results_df.rename(columns={"names": "gene"})
-results_df["gene"] = results_df["gene"].astype(str)
-
-# Rank ALL genes by Wilcoxon z-score (no pre-filtering by significance)
-results_df["Score"] = pd.to_numeric(results_df["scores"], errors="coerce")
-
-rnk = (
-    results_df[["gene", "Score"]]
-    .dropna()
-    .sort_values("Score", ascending=False)
-    .copy()
-)
-rnk["gene"] = rnk["gene"].str.upper()  # Reactome uses human (uppercase) symbols
-
-print(f"  Ranked genes: {len(rnk):,}")
-print(f"  Score range: [{rnk['Score'].min():.2f}, {rnk['Score'].max():.2f}]")
-print(f"  Positive scores (up in High): {int((rnk['Score'] > 0).sum()):,}")
-print(f"  Negative scores (down in High): {int((rnk['Score'] < 0).sum()):,}")
-
-print("\n  Running GSEA prerank (Reactome_Pathways_2024)...")
-gsea = gp.prerank(
-    rnk=rnk,
-    gene_sets="Reactome_Pathways_2024",
-    permutation_num=1000,
-    min_size=2,
-    max_size=2000,
-    seed=42,
-    verbose=False,
-    outdir=None,
-)
-print("  [OK] GSEA complete")
-
-gsea_df = gsea.res2d.copy()
-gsea_df["FDR q-val"] = pd.to_numeric(gsea_df["FDR q-val"], errors="coerce")
-gsea_df["NES"] = pd.to_numeric(gsea_df["NES"], errors="coerce")
-gsea_df["NOM p-val"] = pd.to_numeric(gsea_df["NOM p-val"], errors="coerce")
-
-if "Gene %" in gsea_df.columns:
-    gsea_df["Gene %"] = (
-        gsea_df["Gene %"].astype(str)
-        .str.replace("%", "", regex=False)
-        .astype(float)
-    )
-else:
-    gsea_df["Gene %"] = np.nan
-
-total_pathways = len(gsea_df)
-sig_nom = gsea_df[gsea_df["NOM p-val"] < NOM_P_CUTOFF]
-sig_fdr = gsea_df[gsea_df["FDR q-val"] < 0.25]
-pos_nes = gsea_df[gsea_df["NES"] > 0]
-neg_nes = gsea_df[gsea_df["NES"] < 0]
-pos_sig = sig_nom[sig_nom["NES"] > 0]
-neg_sig = sig_nom[sig_nom["NES"] < 0]
-
-print(f"\n  Total pathways tested: {total_pathways:,}")
-print(f"    Positive NES (enriched in Ascl1-High): {len(pos_nes):,}")
-print(f"    Negative NES (enriched in Ascl1-Low):  {len(neg_nes):,}")
-print(f"\n  Significant:")
-print(f"    NOM p < {NOM_P_CUTOFF}: {len(sig_nom):,} "
-      f"({100 * len(sig_nom) / total_pathways:.1f}%)")
-print(f"      Positive NES: {len(pos_sig):,}")
-print(f"      Negative NES: {len(neg_sig):,}")
-print(f"    FDR q < 0.25: {len(sig_fdr):,} "
-      f"({100 * len(sig_fdr) / total_pathways:.1f}%)")
-
-print(f"\n  Top 10 positive NES:")
-print(pos_nes.nlargest(10, "NES")[["Term", "NES", "NOM p-val", "FDR q-val"]]
-      .to_string(index=False))
-
-print(f"\n  Top 10 negative NES:")
-print(neg_nes.nsmallest(10, "NES")[["Term", "NES", "NOM p-val", "FDR q-val"]]
-      .to_string(index=False))
-
-out_file = RES_DIR / "GSEA_Ascl1_GMM_high_vs_low_female_hep_CT2subset_Reactome2024.csv"
-gsea_df.to_csv(out_file, index=False)
-sig_nom.to_csv(
-    RES_DIR / "GSEA_Ascl1_GMM_significant_NOMp05_Reactome2024.csv",
-    index=False,
-)
-print(f"\n  [OK] {out_file}")
-print(f"  [OK] {RES_DIR}/GSEA_Ascl1_GMM_significant_NOMp05_Reactome2024.csv")
-
-
-# ==============================================================================
-# 6. GSEA DOT PLOTS (TOP 30 POSITIVE NES, TOP 30 NEGATIVE NES)
-# ==============================================================================
-
-banner("STEP 6: GSEA dot plots (top 30 positive + top 30 negative NES)")
-
-gsea = pd.read_csv(out_file)
-gsea.columns = gsea.columns.str.strip()
-
-if "Gene %" in gsea.columns:
-    gsea["Gene %"] = (
-        gsea["Gene %"].astype(str)
-        .str.replace("%", "", regex=False)
-        .astype(float)
-    )
-else:
-    gsea["Gene %"] = np.nan
-
-gsea["term_clean"] = gsea["Term"].apply(
-    lambda t: re.sub(r"\(GO:\d+\)", "", str(t)).strip()
-)
-
-# Top 30 positive NES
-pos_filt = gsea[(gsea["NES"] > 0) & (gsea["NOM p-val"] < NOM_P_CUTOFF)].copy()
-top30_pos = pos_filt.sort_values("Gene %", ascending=False).head(TOP_N_GSEA)
-print(f"  Positive NES pathways (NES > 0, NOM p < {NOM_P_CUTOFF}): {len(top30_pos)}")
-plot_gsea_dotplot(
-    top30_pos, direction="positive",
-    outfile=FIG_DIR / "GSEA_GMM_top30_positiveNES_female_hep_CT2subset.pdf",
-)
-
-# Top 30 negative NES
-neg_filt = gsea[(gsea["NES"] < 0) & (gsea["NOM p-val"] < NOM_P_CUTOFF)].copy()
-top30_neg = neg_filt.sort_values("Gene %", ascending=False).head(TOP_N_GSEA)
-print(f"  Negative NES pathways (NES < 0, NOM p < {NOM_P_CUTOFF}): {len(top30_neg)}")
-plot_gsea_dotplot(
-    top30_neg, direction="negative",
-    outfile=FIG_DIR / "GSEA_GMM_top30_negativeNES_female_hep_CT2subset.pdf",
-)
 
 
 # ==============================================================================
