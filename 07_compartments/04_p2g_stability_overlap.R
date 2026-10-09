@@ -44,7 +44,7 @@ suppressPackageStartupMessages({
 compartment_outdir <- "path/to/output/downstream_stability"
 
 # hepatocyte ArchR project with P2G linkages
-archr_proj_path <- "path/to/ArchR_Projects/Step8_Hepatocyte_CCAN_P2G"
+archr_proj_path <- "path/to/ArchR_Projects/Step11b_hepatocyte_P2G"
 
 # Stability classification file
 stability_file <- "path/to/output/compartment_stability_5class.tsv"
