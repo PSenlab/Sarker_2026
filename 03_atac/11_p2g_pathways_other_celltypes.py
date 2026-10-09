@@ -43,7 +43,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # ==============================================================================
 
 # AnnData with cell_type annotations
-ADATA_PATH = "integrated_scvi.h5ad"
+ADATA_PATH = "rna_wnn.h5ad"
 
 # Base directory containing per-celltype P2G output folders
 # Expected structure: P2G_BASE_DIR/{celltype}/P2G_AllClusters_GENES.xlsx
