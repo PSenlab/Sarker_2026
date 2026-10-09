@@ -372,9 +372,12 @@ banner("STEP 1: Load h5ad, pre-geriatric hepatocytes, Ascl1 status")
 
 seurat_obj <- schard::h5ad2seurat(H5AD_PATH)
 
+# age may be spelled "pre_geriatric" or "pre-geriatric"
+age_std <- gsub("-", "_", as.character(seurat_obj$age))
 data <- subset(
   seurat_obj,
-  subset = cell_type == "hepatocyte" & age == "pre_geriatric"
+  cells = colnames(seurat_obj)[which(seurat_obj$cell_type == "hepatocyte" &
+                                     age_std == "pre_geriatric")]
 )
 rm(seurat_obj); gc()
 
