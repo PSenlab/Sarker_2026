@@ -6,8 +6,10 @@
 # Description:
 #   Profiles Ascl1 expression across the full single-nucleus multi-ome liver
 #   aging dataset, then focuses on female hepatocytes where Ascl1 shows a
-#   sex-specific aging signal. Ascl1+ vs Ascl1- differential expression and
-#   GSEA are done per lobular zone in 04_Ascl1_zonation.py.
+#   sex-specific aging signal. Performs differential expression between
+#   Ascl1+ and Ascl1- female hepatocytes (Wilcoxon); the up and down gene
+#   lists are used in chip/09_genelist_peak_overlap.py. Per-zone DE and GSEA
+#   are done in 04_Ascl1_zonation.py.
 #
 # Pipeline:
 #   1. Load data
@@ -16,6 +18,7 @@
 #   4. Female hepatocyte Ascl1 analysis (age / subcluster)
 #   5. Count-based dot plots
 #   6. Ascl1+ subset characterization
+#   7. Wilcoxon DE: Ascl1+ vs Ascl1-
 #
 # Input:
 #   - rna_wnn.h5ad  (annotated AnnData with cell_type, subcluster, sex, age)
@@ -67,6 +70,9 @@ AGE_ORDER = ["young", "mid_age", "old", "pre_geriatric", "geriatric"]
 AGE_ALIASES = {"midage": "mid_age", "pregeriatric": "pre_geriatric"}
 
 GENE = "Ascl1"
+
+# DE threshold
+PVAL_THRESHOLD  = 0.05
 
 
 # ==============================================================================
@@ -331,6 +337,57 @@ print(f"\n  Ascl1 expression in Ascl1+ cells:")
 print(f"    Mean:   {adata_fh_pos.obs['Ascl1_expr'].mean():.3f}")
 print(f"    Median: {adata_fh_pos.obs['Ascl1_expr'].median():.3f}")
 print(f"    Std:    {adata_fh_pos.obs['Ascl1_expr'].std():.3f}")
+
+
+# ==============================================================================
+# 7. DIFFERENTIAL EXPRESSION: Ascl1+ vs Ascl1- (Wilcoxon)
+# ==============================================================================
+
+banner("STEP 7: Wilcoxon DE (Ascl1+ vs Ascl1-) in female hepatocytes")
+
+adata_fh.obs["Ascl1_status"] = pd.Categorical(
+    np.where(adata_fh.obs["Ascl1_expr"] > 0, "Ascl1_pos", "Ascl1_neg"),
+    categories=["Ascl1_pos", "Ascl1_neg"], ordered=True,
+)
+
+print("  Group sizes:")
+print(adata_fh.obs["Ascl1_status"].value_counts().to_string())
+
+print("\n  Running Wilcoxon rank-sum test...")
+sc.tl.rank_genes_groups(
+    adata_fh,
+    groupby="Ascl1_status",
+    groups=["Ascl1_pos"],
+    reference="Ascl1_neg",
+    method="wilcoxon",
+    use_raw=False,
+)
+print("  [OK] DE complete")
+
+de_res = sc.get.rank_genes_groups_df(adata_fh, group="Ascl1_pos")
+
+sig_genes  = de_res[de_res["pvals_adj"] < PVAL_THRESHOLD]
+up_genes   = sig_genes[sig_genes["logfoldchanges"] > 0]
+down_genes = sig_genes[sig_genes["logfoldchanges"] < 0]
+
+print(f"\n  Total genes tested: {len(de_res):,}")
+print(f"  Significant (adj p < {PVAL_THRESHOLD}): {len(sig_genes):,}")
+print(f"    Up in Ascl1+:   {len(up_genes):,}")
+print(f"    Down in Ascl1+: {len(down_genes):,}")
+
+de_res.to_csv(RES_DIR / "wilcoxon_Ascl1_pos_vs_neg_female_hepatocytes.csv", index=False)
+sig_genes.to_csv(
+    RES_DIR / "wilcoxon_Ascl1_pos_vs_neg_female_hepatocytes_significant.csv",
+    index=False,
+)
+print(f"\n  [OK] {RES_DIR}/wilcoxon_Ascl1_pos_vs_neg_female_hepatocytes.csv")
+
+# gene lists for the ChIP overlap (chip/09_genelist_peak_overlap.py)
+up_genes[["names"]].rename(columns={"names": "gene"}).to_csv(
+    RES_DIR / "all_hep_up.csv", index=False)
+down_genes[["names"]].rename(columns={"names": "gene"}).to_csv(
+    RES_DIR / "all_hep_down.csv", index=False)
+print(f"  [OK] {RES_DIR}/all_hep_up.csv, {RES_DIR}/all_hep_down.csv")
 
 
 # ==============================================================================
