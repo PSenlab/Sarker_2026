@@ -60,7 +60,7 @@ suppressPackageStartupMessages({
 # ==============================================================================
 # CONFIGURATION - UPDATE THIS PATH
 # ==============================================================================
-H5AD_PATH       <- "integrated_scvi.h5ad"
+H5AD_PATH       <- "rna_wnn.h5ad"
 
 CELLTYPES       <- c("hep_01", "hep_02", "hep_03", "hep_04",
                      "hep_05", "hep_06", "hep_07")
