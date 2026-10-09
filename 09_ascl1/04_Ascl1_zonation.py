@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Ascl1+ vs Ascl1- female hepatocytes, by lobular zone  -  6-STEP PIPELINE
+# Ascl1+ vs Ascl1- female hepatocytes, by lobular zone  -  4-STEP PIPELINE
 # ==============================================================================
 #
 #   STEP 1  load h5ad -> subset to female hepatocytes        -> hep_female.h5ad
 #   STEP 2  define lobular zone from subcluster              -> (in-memory obs)
 #   STEP 3  Wilcoxon DE per zone (Ascl1_pos vs Ascl1_neg)    -> results/*.csv
 #   STEP 4  volcano per zone + combined 1x3 row              -> figures/
-#   STEP 5  Reactome GSEA prerank per zone                   -> results/*.csv
-#   STEP 6  GSEA dotplot per zone + combined 1x3 row         -> figures/
 #
-#   Every step is CHECKPOINTED. Steps 3 and 5 skip work whose output csv
-#   already exists (set REUSE_EXISTING = False to force a recompute), and
-#   steps 4 and 6 read those csvs off disk. So you can rerun just the figures:
+#   Every step is CHECKPOINTED. Step 3 skips work whose output csv already
+#   exists (set REUSE_EXISTING = False to force a recompute), and step 4
+#   reads those csvs off disk. So you can rerun just the figures:
 #
-#       python 04_Ascl1_zonation.py --steps 4,6
+#       python 04_Ascl1_zonation.py --steps 4
 #
-#   Steps 4 and 6 import neither scanpy nor gseapy (both are imported lazily
-#   inside steps 1/3 and 5), so figure-only reruns work in a light environment.
+#   Step 4 does not import scanpy (imported lazily inside steps 1 and 3), so
+#   figure-only reruns work in a light environment.
 #
-#   SCOPE: the three lobular zones (no pooled all-female-hepatocyte
-#   comparison).
+#   SCOPE: the three lobular zones. The pooled all-female-hepatocyte
+#   comparison is in 01_Ascl1_positive_negative.py.
 # ==============================================================================
 
 import argparse
-import re
 import sys
 import warnings
 from pathlib import Path
@@ -33,9 +30,7 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
 from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 
 warnings.filterwarnings("ignore")
 
@@ -69,7 +64,7 @@ MIN_CELLS_PER_GROUP = 20     # skip a zone if either Ascl1 group is smaller
 PVAL_THRESHOLD      = 0.05
 LOGFC_THRESHOLD     = 0      # log2 units; 0 = adjusted p alone defines significance
 
-REUSE_EXISTING = True        # skip STEP 3 / 5 where the output csv already exists
+REUSE_EXISTING = True        # skip STEP 3 where the output csv already exists
 FORMATS = ("pdf", "png", "svg")
 
 FIG_DIR = Path("figures")
@@ -78,7 +73,6 @@ FIG_DIR.mkdir(exist_ok=True)
 RES_DIR.mkdir(exist_ok=True)
 
 DE_STEM   = "wilcoxon_Ascl1_pos_vs_neg_female_hep_{zone}"
-GSEA_STEM = "GSEA_Ascl1_{zone}_Reactome2024"
 
 # --- volcano styling ----------------------------------------------------------
 XLIM = (-5, 5)               # None to autoscale
@@ -125,17 +119,6 @@ GENES_TO_LABEL = {
     },
 }
 
-# --- GSEA styling -------------------------------------------------------------
-GENE_SETS   = "Reactome_Pathways_2024"
-PERM_NUM    = 1000
-NOMP_CUT    = 0.05
-TOP_N       = 30
-CMAP         = "RdYlBu_r"
-SIZE_RANGE   = (60, 400)     # dot size range, min -> max -log10(NOM p)
-PANEL_LETTERS = None         # e.g. ["g", "h", "i"] to letter the combined row
-# NOTE: colour (Gene %) and size (-log10 NOM p) scales are PANEL-LOCAL, not
-# shared across the row - matching the manuscript panel pattern.
-
 
 # ==============================================================================
 # HELPERS
@@ -148,10 +131,6 @@ def banner(text):
 
 def de_path(zone):
     return RES_DIR / f"{DE_STEM.format(zone=zone)}.csv"
-
-
-def gsea_path(zone):
-    return RES_DIR / f"{GSEA_STEM.format(zone=zone)}.csv"
 
 
 def savefig(fig, directory, stem):
@@ -453,275 +432,14 @@ def step4_volcano():
 
 
 # ==============================================================================
-# STEP 5 - REACTOME GSEA
-# ==============================================================================
-
-def step5_gsea():
-    """GSEA prerank against Reactome, ranked on the Wilcoxon score."""
-    banner("STEP 5: Reactome GSEA prerank per zone")
-    import gseapy as gp
-
-    for zone in ZONE_ORDER:
-        print(f"\n  --- {zone} ---")
-        out = gsea_path(zone)
-        if REUSE_EXISTING and out.exists():
-            print(f"    Reusing {out}")
-            continue
-
-        dpath = de_path(zone)
-        if not dpath.exists():
-            print(f"    [skip] missing {dpath} - run STEP 3 first")
-            continue
-
-        de = pd.read_csv(dpath).rename(columns={"names": "gene"})
-        de["gene"] = de["gene"].astype(str)
-
-        # seeded jitter breaks score ties so the ranking is deterministic
-        rng = np.random.default_rng(42)
-        de["Score"] = de["scores"] + rng.normal(0, 1e-6, len(de))
-
-        rnk = de[["gene", "Score"]].dropna().sort_values("Score", ascending=False)
-        rnk["gene"] = rnk["gene"].str.upper()       # Reactome uses human symbols
-        rnk = rnk.drop_duplicates(subset="gene", keep="first")
-        print(f"    ranked {len(rnk):,} genes")
-
-        res = gp.prerank(rnk=rnk, gene_sets=GENE_SETS,
-                         permutation_num=PERM_NUM, min_size=2, max_size=2000,
-                         seed=42, outdir=None, verbose=False)
-
-        gsea_df = res.res2d.copy()
-        gsea_df["FDR q-val"] = pd.to_numeric(gsea_df["FDR q-val"], errors="coerce")
-        if "Gene %" in gsea_df.columns:
-            gsea_df["Gene %"] = (gsea_df["Gene %"].astype(str)
-                                 .str.replace("%", "", regex=False).astype(float))
-        else:
-            gsea_df["Gene %"] = 1.0
-
-        gsea_df.to_csv(out, index=False)
-        n_sig = int((pd.to_numeric(gsea_df["NOM p-val"], errors="coerce")
-                     < NOMP_CUT).sum())
-        print(f"    [OK] {out} ({len(gsea_df)} pathways, "
-              f"{n_sig} at NOM p < {NOMP_CUT})")
-
-
-# ==============================================================================
-# STEP 6 - GSEA DOTPLOTS
-# ==============================================================================
-
-def _prep_gsea_panel(gsea_df, top_n=TOP_N, nomp_cut=NOMP_CUT):
-    """Term selection + dot scaling for one zone. None if nothing passes."""
-    if gsea_df is None or gsea_df.empty:
-        return None
-    g = gsea_df.copy()
-    g.columns = g.columns.str.strip()
-
-    if "Gene %" in g.columns:
-        g["Gene %"] = (g["Gene %"].astype(str)
-                       .str.replace("%", "", regex=False).astype(float))
-    else:
-        g["Gene %"] = np.nan
-    g["NOM p-val"] = pd.to_numeric(g["NOM p-val"], errors="coerce")
-    g["NES"] = pd.to_numeric(g["NES"], errors="coerce")
-
-    filt = g[(g["NOM p-val"] < nomp_cut) & np.isfinite(g["NES"])].copy()
-    if filt.empty:
-        return None
-
-    top = filt.sort_values("Gene %", ascending=False).head(top_n).copy()
-    top["term_clean"] = top["Term"].apply(
-        lambda t: re.sub(r"\(GO:\d+\)", "", str(t)).strip())
-
-    # disambiguate terms that clean to the same string, so the Categorical row
-    # order below stays 1:1 with rows
-    dup = top["term_clean"].duplicated(keep=False)
-    if dup.any():
-        top.loc[dup, "term_clean"] = (
-            top.loc[dup, "term_clean"] + " (" +
-            top.loc[dup].groupby("term_clean").cumcount().add(1).astype(str) + ")")
-
-    top["pval_size"] = -np.log10(top["NOM p-val"].replace(0, 1e-10))
-    lo, hi = 60, 400
-    pmin, pmax = top["pval_size"].min(), top["pval_size"].max()
-    top["size_scaled"] = (lo + (top["pval_size"] - pmin) / (pmax - pmin) * (hi - lo)
-                          if pmax > pmin else (lo + hi) / 2)
-
-    # highest NES at the TOP (matplotlib draws category 0 at the bottom)
-    top = top.sort_values("NES", ascending=False).reset_index(drop=True)
-    cat_order = top.sort_values("NES", ascending=True)["term_clean"].tolist()
-    top["term_clean"] = pd.Categorical(top["term_clean"],
-                                       categories=cat_order, ordered=True)
-    return top
-
-
-def _ytick_fs(n):
-    if n <= 18:
-        return 14
-    if n <= 26:
-        return 13
-    if n <= 34:
-        return 12
-    return 11
-
-
-def _panel_xlim(nes, share_lo=None, share_hi=None):
-    lo, hi = ((share_lo, share_hi) if share_lo is not None
-              else (float(np.nanmin(nes)), float(np.nanmax(nes))))
-    span = hi - lo
-    pad = max(0.12 * span, 0.15) if span > 0 else 0.5
-    return lo - pad, hi + pad
-
-
-def _draw_gsea_panel(ax, top, title, letter=None):
-    """Draw one dotplot panel with PANEL-LOCAL colour and size scales.
-
-    Deliberately not shared across panels: each zone gets its own Gene %
-    colorbar and its own -log10(nominal p) size legend, so every panel is
-    self-contained and reads exactly like the standalone figures already in
-    the manuscript.
-    """
-    n = len(top)
-
-    # --- panel-local scales --------------------------------------------------
-    gmin, gmax = top["Gene %"].min(), top["Gene %"].max()
-    norm = plt.Normalize(gmin, gmax)
-    pmin, pmax = top["pval_size"].min(), top["pval_size"].max()
-    prng = (pmax - pmin) if pmax > pmin else 1.0
-    smin, smax = SIZE_RANGE
-    top = top.copy()
-    top["size_panel"] = smin + (top["pval_size"] - pmin) / prng * (smax - smin)
-
-    sns.scatterplot(data=top, x="NES", y="term_clean",
-                    size="size_panel", sizes=SIZE_RANGE,
-                    hue="Gene %", hue_norm=norm, palette=CMAP,
-                    edgecolor="black", linewidth=0.5, ax=ax, legend=False)
-
-    nes = top["NES"].to_numpy(dtype=float)
-    ax.set_xlim(*_panel_xlim(nes))
-    if np.nanmin(nes) < 0 < np.nanmax(nes):
-        ax.axvline(0, color="gray", lw=1, zorder=0)
-    ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4, prune="both"))
-    ax.set_ylim(-0.7, n - 1 + 0.7)
-    ax.tick_params(axis="y", labelsize=_ytick_fs(n), pad=2)
-    ax.tick_params(axis="x", labelsize=9)
-    ax.set_xlabel("normalized enrichment score (NES)", fontsize=10)
-    ax.set_ylabel("")
-    ax.set_title(title, fontsize=11)
-
-    # --- panel-local colorbar, attached to THIS axes -------------------------
-    sm = plt.cm.ScalarMappable(cmap=CMAP, norm=norm); sm.set_array([])
-    cbar = ax.figure.colorbar(sm, ax=ax, fraction=0.035, pad=0.02, shrink=0.55)
-    cbar.set_label("gene %", fontsize=9)
-    cbar.ax.tick_params(labelsize=8)
-
-    # --- panel-local size legend, inside the axes ----------------------------
-    # Line2D handles, not plt.scatter: an empty plt.scatter attaches a stray
-    # collection to whichever axes is current, which pollutes the panel.
-    # markersize is in points, s is points^2, hence the sqrt.
-    ref = np.linspace(pmin, pmax, 4)
-    handles = [Line2D([], [], linestyle="none", marker="o",
-                      markersize=np.sqrt(smin + (v - pmin) / prng * (smax - smin)),
-                      markerfacecolor="white", markeredgecolor="black",
-                      markeredgewidth=0.5)
-               for v in ref]
-    leg = ax.legend(handles, [f"{v:.1f}" for v in ref],
-                    title="-log$_{10}$(nominal\np-value)",
-                    loc="lower right", frameon=False,
-                    fontsize=7, title_fontsize=7,
-                    labelspacing=0.9, handletextpad=0.8, borderpad=0.3)
-    leg.get_title().set_multialignment("center")
-
-    if letter:
-        ax.text(-0.02, 1.04, letter, transform=ax.transAxes,
-                fontsize=16, fontweight="bold", ha="right", va="bottom")
-
-
-def _single_gsea_dotplot(top, zone, letter=None):
-    """Standalone dotplot for one zone."""
-    n = len(top)
-    fig, ax = plt.subplots(figsize=(7, max(5.5, 0.34 * n + 2.5)))
-    _draw_gsea_panel(ax, top, zone.lower(), letter)
-    fig.tight_layout()
-    savefig(fig, FIG_DIR, f"{GSEA_STEM.format(zone=zone)}")
-
-
-def _combined_gsea_dotplot(panels):
-    """One row of dotplots, one panel per zone.
-
-    Each panel is INDEPENDENT: its own x-range, its own Gene % colorbar and its
-    own size legend. Nothing is shared across the row, matching the panel
-    pattern already used in the manuscript figure. The consequence, stated
-    plainly: dot colour and dot size mean different things in different panels,
-    so they are not comparable by eye across zones - only within a zone.
-    """
-    labels = [z for z in ZONE_ORDER if z in panels]
-    n_panels = len(labels)
-
-    n_rows_max = max((len(p) for p in panels.values() if p is not None), default=1)
-    row_h = 0.34 if _ytick_fs(n_rows_max) <= 12 else 0.42
-    fig_h = float(np.clip(row_h * n_rows_max + 2.8, 5.5, 22.0))
-
-    longest = 0
-    for p in panels.values():
-        if p is not None:
-            longest = max(longest, int(p["term_clean"].astype(str).str.len().max()))
-    # a little extra width per panel now that each carries its own colorbar
-    fig_w = (4.1 + 0.055 * float(np.clip(longest, 30, 75))) * n_panels
-    gutter = float(np.clip(0.006 * longest, 0.14, 0.34))
-
-    fig = plt.figure(figsize=(fig_w, fig_h))
-    gs = fig.add_gridspec(1, n_panels, wspace=gutter,
-                          left=0.005, right=0.98, top=0.90, bottom=0.07)
-    axes = [fig.add_subplot(gs[0, i]) for i in range(n_panels)]
-
-    letters = PANEL_LETTERS if PANEL_LETTERS else [None] * n_panels
-    for ax, lb, letter in zip(axes, labels, letters):
-        p = panels[lb]
-        if p is None:
-            ax.text(0.5, 0.5, f"{lb.lower()}\n(no terms\nNOM p < {NOMP_CUT})",
-                    ha="center", va="center", fontsize=11, transform=ax.transAxes)
-            ax.set_axis_off()
-            continue
-        _draw_gsea_panel(ax, p, lb.lower(), letter)
-
-    fig.suptitle("Ascl1+ vs Ascl1- female hepatocytes - Reactome GSEA by zone\n"
-                 f"top {TOP_N} per panel by Gene %, NOM p < {NOMP_CUT}",
-                 fontsize=13, weight="bold", y=0.97)
-    savefig(fig, FIG_DIR, "GSEA_Ascl1_COMBINED_zones")
-    print(f"      ({n_panels} panels, {fig_w:.1f} x {fig_h:.1f} in, "
-          f"tallest {n_rows_max} rows, per-panel colour/size scales)")
-
-
-def step6_gsea_plots():
-    banner("STEP 6: GSEA dotplots")
-    panels = {}
-    for zone in ZONE_ORDER:
-        f = gsea_path(zone)
-        if not f.exists():
-            print(f"    [skip] missing {f} - run STEP 5 first")
-            continue
-        top = _prep_gsea_panel(pd.read_csv(f))
-        panels[zone] = top
-        if top is None:
-            print(f"    {zone}: no terms at NOM p < {NOMP_CUT}")
-            continue
-        print(f"    {zone}: {len(top)} terms")
-        _single_gsea_dotplot(top, zone)
-
-    if any(p is not None for p in panels.values()):
-        _combined_gsea_dotplot(panels)
-    else:
-        print("    no panels with terms - combined figure skipped")
-
-
-# ==============================================================================
 # MAIN
 # ==============================================================================
 
 def main():
     ap = argparse.ArgumentParser(
         description="Ascl1 zone pipeline. Steps are checkpointed; rerun a "
-                    "subset with --steps (e.g. --steps 4,6 for figures only).")
-    ap.add_argument("--steps", default="1,2,3,4,5,6",
+                    "subset with --steps (e.g. --steps 4 for figures only).")
+    ap.add_argument("--steps", default="1,2,3,4",
                     help="comma-separated step numbers to run (default: all)")
     ap.add_argument("--force", action="store_true",
                     help="recompute even where output csv already exists")
@@ -748,10 +466,6 @@ def main():
         step3_wilcoxon(hep_female)
     if 4 in steps:
         step4_volcano()
-    if 5 in steps:
-        step5_gsea()
-    if 6 in steps:
-        step6_gsea_plots()
 
     banner("DONE")
     print(f"  Figures: {FIG_DIR}/    Tables: {RES_DIR}/")
