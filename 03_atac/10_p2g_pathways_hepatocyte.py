@@ -44,7 +44,7 @@ mpl.rcParams["ps.fonttype"] = 42
 # ==============================================================================
 
 # AnnData for background gene extraction
-ADATA_PATH = "integrated_scvi.h5ad"
+ADATA_PATH = "rna_wnn.h5ad"
 
 # Directory containing the per-cluster CSVs produced by archr_p2g_analysis.R
 # (Step 12.4 writes P2G_C1_genes.csv .. P2G_CK_genes.csv into its OUTPUT_DIR)
