@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# SCENIC+ Step 2: MALLET LDA Model Fitting — ALL COMPARTMENTS
+# SCENIC+ Step 2: MALLET LDA Model Fitting - ALL COMPARTMENTS
 # ==============================================================================
 #
 # Input  (per compartment, from Step 1):
