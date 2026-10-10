@@ -1,9 +1,9 @@
-# A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging
+# A sex-resolved single-cell multi-omic atlas of mouse liver aging
 ## Overview
 
 This repository contains the complete analysis code for the manuscript:
 
-A lifespan-resolved multi-omic study reveals dynamic transcription factor networks and the regulatory logic of liver aging
+A sex-resolved single-cell multi-omic atlas of mouse liver aging
 > Nishat Sarker, Na Yang, Sadia Afrin, Michel Bernier, Nirad Banskota, Minjung Kwon, Yaohui Chen, Amit Singh, Nathan L. Price, Robert W. Maul, Lin Wang, Miguel Aon, Chang-Yi Cui, Jinshui Fan, Supriyo De, Mary Kaileh, Jeffrey Albrecht, Ranjan Sen, Myriam Gorospe, Rafael de Cabo, Payel Sen.
 
 
