@@ -1,4 +1,4 @@
-# A sex-resolved single-cell multi-omic atlas of mouse liver ageing
+# A sex-resolved single-cell multi-omic atlas of mouse liver aging
 ## Overview
 
 This repository contains the complete analysis code for the manuscript:
